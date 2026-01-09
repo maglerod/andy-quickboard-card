@@ -1,6 +1,6 @@
 /**
  * Andy Quickboard Card
- * v1.0.2
+ * v1.0.3
  * ------------------------------------------------------------------
  * Developed by: Andreas ("AndyBonde") with some help from AI :).
  *
@@ -21,7 +21,7 @@ const CARD_TAG = "andy-quickboard-card";
 const EDITOR_TAG = "andy-quickboard-card-editor";
 
 console.info(
-  `%c Andy Quickboard Card %c v1.0.2 loaded `,
+  `%c Andy Quickboard Card %c v1.0.3 loaded `,
   "color: white; background: #1565C0; padding: 4px 8px; border-radius: 4px 0 0 4px;",
   "color: white; background: #1E88E5; padding: 4px 8px; border-radius: 0 4px 4px 0;"
 );
@@ -1046,11 +1046,12 @@ if (!customElements.get(CARD_TAG)) {
         }
         .tiles-row {
           display: flex;
-          flex-direction: row;
+          flex-wrap: wrap;
           gap: 12px;
         }
         .tiles-row > .tile {
           flex: 1 1 0;
+          min-width: 50px;
         }
         .tile {
           position: relative;
