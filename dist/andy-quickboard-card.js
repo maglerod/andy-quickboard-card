@@ -17,6 +17,9 @@
  *
  */
 
+const CARD_TAG = "andy-quickboard-card";
+const EDITOR_TAG = "andy-quickboard-card-editor";
+
 console.info(
   `%c Andy Quickboard Card %c v1.0.2 loaded `,
   "color: white; background: #1565C0; padding: 4px 8px; border-radius: 4px 0 0 4px;",
