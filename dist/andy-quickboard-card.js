@@ -1,6 +1,6 @@
 /**
  * Andy Quickboard Card
- * v1.0.1
+ * v1.0.2
  * ------------------------------------------------------------------
  * Developed by: Andreas ("AndyBonde") with some help from AI :).
  *
@@ -17,11 +17,8 @@
  *
  */
 
-const CARD_TAG = "andy-quickboard-card";
-const EDITOR_TAG = "andy-quickboard-card-editor";
-
 console.info(
-  `%c Andy Quickboard Card %c v1.0.1 loaded `,
+  `%c Andy Quickboard Card %c v1.0.2 loaded `,
   "color: white; background: #1565C0; padding: 4px 8px; border-radius: 4px 0 0 4px;",
   "color: white; background: #1E88E5; padding: 4px 8px; border-radius: 0 4px 4px 0;"
 );
@@ -112,7 +109,7 @@ if (!customElements.get(CARD_TAG)) {
             label: "Main floor",
             label_position: "top-left",
             entities: [
-            {
+              {
                 entity: first,
                 icon: "",
                 icon_mode: "single",
@@ -126,7 +123,6 @@ if (!customElements.get(CARD_TAG)) {
                 badges: [],
               },
             ],
-
           },
         ],
       };
@@ -418,42 +414,41 @@ if (!customElements.get(CARD_TAG)) {
       const iconNameRow = document.createElement("div");
       iconNameRow.classList.add("tile-icon-name-row");
 
-        const iconEl = document.createElement("ha-icon");
+      const iconEl = document.createElement("ha-icon");
 
-        let iconName = "";
-        // 1) State-baserade ikoner om aktiverat
-        if (
-            stateObj &&
-            entCfg.icon_mode === "state" &&
-          Array.isArray(entCfg.icon_states)
-        ) {
+      let iconName = "";
+      // 1) State-baserade ikoner om aktiverat
+      if (
+        stateObj &&
+        entCfg.icon_mode === "state" &&
+        Array.isArray(entCfg.icon_states)
+      ) {
         const raw = String(stateObj.state ?? "");
         const lower = raw.toLowerCase();
         const match = entCfg.icon_states.find(
-            (m) => String(m.state ?? "").toLowerCase() === lower
+          (m) => String(m.state ?? "").toLowerCase() === lower
         );
         if (match && match.icon) {
-            iconName = match.icon;
-            }
+          iconName = match.icon;
         }
+      }
 
-        // 2) Fallback: custom ikon / entitetens ikon
-        if (!iconName) {
+      // 2) Fallback: custom ikon / entitetens ikon
+      if (!iconName) {
         iconName =
-            entCfg.icon ||
-            (stateObj ? stateObj.attributes.icon || "" : "");
-        }
-        
-        // 3) Sista fallback
-        if (iconName) {
-        iconEl.setAttribute("icon", iconName);
-        } else if (entityId) {
-        iconEl.setAttribute("icon", "hass:thermometer");
-        }
-    
-        iconEl.classList.add("tile-icon");
-        iconNameRow.appendChild(iconEl);
+          entCfg.icon ||
+          (stateObj ? stateObj.attributes.icon || "" : "");
+      }
 
+      // 3) Sista fallback
+      if (iconName) {
+        iconEl.setAttribute("icon", iconName);
+      } else if (entityId) {
+        iconEl.setAttribute("icon", "hass:thermometer");
+      }
+
+      iconEl.classList.add("tile-icon");
+      iconNameRow.appendChild(iconEl);
 
       const nameEl = document.createElement("div");
       nameEl.classList.add("tile-name");
@@ -713,7 +708,7 @@ if (!customElements.get(CARD_TAG)) {
             const mode = badgeCfg.media_info_mode || "title_artist";
             let txt = "—";
             if (bState) {
-              const a = bState.attributes || {};
+              const a = bState.attributes ||{};
               const title = a.media_title || "";
               const artist = a.media_artist || "";
               const album =
@@ -924,6 +919,7 @@ if (!customElements.get(CARD_TAG)) {
       };
       const intervals = this._config.color_intervals || [];
 
+      // Per-entity custom color mode (unchanged)
       if (entCfg && entCfg.color_mode === "custom") {
         const cf = entCfg.color_from || "#1E88E5";
         const ct = entCfg.color_to || cf;
@@ -939,6 +935,7 @@ if (!customElements.get(CARD_TAG)) {
       const numericVal = Number(rawState);
       const hasNumeric = !isNaN(numericVal);
 
+      // 1) Globala intervall – som tidigare
       for (const i of intervals) {
         const from = i.from ?? 0;
         const to = i.to ?? 0;
@@ -956,7 +953,9 @@ if (!customElements.get(CARD_TAG)) {
             result.text_color = txt;
             result.state_label = i.state_text || "";
             result.suffix_text = i.suffix_text || "";
-            return result;
+            // OBS: vi fortsätter inte return här – per-entity overrides kan
+            // fortfarande få "sista ordet" nedan.
+            break;
           }
           continue;
         }
@@ -967,9 +966,44 @@ if (!customElements.get(CARD_TAG)) {
           result.text_color = txt;
           result.state_label = "";
           result.suffix_text = i.suffix_text || "";
-          return result;
+          break;
         }
       }
+
+      // 2) Per-entity, per-state overrides via icon_states
+      if (
+        entCfg &&
+        entCfg.icon_mode === "state" &&
+        Array.isArray(entCfg.icon_states)
+      ) {
+        const lower = rawState.toLowerCase();
+        const match = entCfg.icon_states.find(
+          (m) => String(m.state ?? "").toLowerCase() === lower
+        );
+        if (match) {
+          // Färg override
+          if (match.color_from || match.color_to) {
+            const cf = match.color_from || match.color_to || "#1E88E5";
+            const ct = match.color_to || cf;
+            result.background =
+              cf === ct ? cf : `linear-gradient(135deg, ${cf}, ${ct})`;
+          }
+          if (match.text_color) {
+            result.text_color = match.text_color;
+          }
+
+          // Label override
+          if (typeof match.label === "string" && match.label.length > 0) {
+            result.state_label = match.label;
+          }
+
+          // Suffix override (kan vara tom sträng för "inget suffix")
+          if (typeof match.suffix_text === "string") {
+            result.suffix_text = match.suffix_text;
+          }
+        }
+      }
+
       return result;
     }
 
@@ -1109,13 +1143,6 @@ if (!customElements.get(CARD_TAG)) {
           margin-left: 8px;
           width: 100px;
         }
-/*
-        @media (max-width: 600px) {
-          .tiles-row {
-            flex-direction: column;
-          }
-        }
-*/        
       `;
     }
   }
@@ -1274,6 +1301,40 @@ if (!customElements.get(EDITOR_TAG)) {
       input.click();
     }
 
+    // NEW: State-level color picker for icon_states
+    _openStateColorPicker(e, rowIdx, entIdx, stateIdx, field) {
+      e.stopPropagation();
+      const rows = this._config.rows || [];
+      const ent = rows[rowIdx]?.entities?.[entIdx] || {};
+      const states = ent.icon_states || [];
+      const st = states[stateIdx] || {};
+      const current = st[field] || "#000000";
+
+      const input = document.createElement("input");
+      input.type = "color";
+      input.value = current.startsWith("#") ? current : "#000000";
+      input.style.position = "fixed";
+
+      const rect = e.currentTarget.getBoundingClientRect();
+      input.style.left = `${rect.left + rect.width / 2}px`;
+      input.style.top = `${rect.top + rect.height / 2}px`;
+
+      document.body.appendChild(input);
+
+      const onInput = (ev2) => {
+        const val = ev2.target.value;
+        this._updateStateColorField(rowIdx, entIdx, stateIdx, field, val);
+      };
+      const onChange = () => {
+        document.body.removeChild(input);
+        input.removeEventListener("input", onInput);
+        input.removeEventListener("change", onChange);
+      };
+      input.addEventListener("input", onInput);
+      input.addEventListener("change", onChange);
+      input.click();
+    }
+
     _openGlobalColorPicker(e, field) {
       e.stopPropagation();
       const current = this._config[field] || "#FFFFFF";
@@ -1347,6 +1408,37 @@ if (!customElements.get(EDITOR_TAG)) {
         };
       }
       this._config.rows[rowIdx].entities[entIdx][field] = value;
+      this.requestUpdate();
+      this._emitConfigChanged();
+    }
+
+    // NEW: update helper for icon_states color/text fields
+    _updateStateColorField(rowIdx, entIdx, stateIdx, field, value) {
+      if (!this._config.rows) this._config.rows = [];
+      if (!this._config.rows[rowIdx]) this._config.rows[rowIdx] = { entities: [] };
+      if (!this._config.rows[rowIdx].entities)
+        this._config.rows[rowIdx].entities = [];
+      if (!this._config.rows[rowIdx].entities[entIdx]) {
+        this._config.rows[rowIdx].entities[entIdx] = {
+          icon_states: [],
+        };
+      }
+      if (!this._config.rows[rowIdx].entities[entIdx].icon_states) {
+        this._config.rows[rowIdx].entities[entIdx].icon_states = [];
+      }
+      if (!this._config.rows[rowIdx].entities[entIdx].icon_states[stateIdx]) {
+        this._config.rows[rowIdx].entities[entIdx].icon_states[stateIdx] = {
+          state: "",
+          icon: "",
+          label: "",
+          color_from: "",
+          color_to: "",
+          text_color: "",
+          suffix_text: "",
+        };
+      }
+      this._config.rows[rowIdx].entities[entIdx].icon_states[stateIdx][field] =
+        value;
       this.requestUpdate();
       this._emitConfigChanged();
     }
@@ -1861,19 +1953,19 @@ if (!customElements.get(EDITOR_TAG)) {
                     @click=${(() => {
                       if (!this._config.rows[rowIdx].entities)
                         this._config.rows[rowIdx].entities = [];
-                        this._config.rows[rowIdx].entities.push({
-                          entity: "",
-                          icon: "",
-                          icon_mode: "single",
-                          icon_states: [],
-                          name: "",
-                          value_font_size: 1.0,
-                          label_font_size: 1.0,
-                          color_mode: "interval",
-                          color_from: "",
-                          color_to: "",
-                          badges: [],
-                        });
+                      this._config.rows[rowIdx].entities.push({
+                        entity: "",
+                        icon: "",
+                        icon_mode: "single",
+                        icon_states: [],
+                        name: "",
+                        value_font_size: 1.0,
+                        label_font_size: 1.0,
+                        color_mode: "interval",
+                        color_from: "",
+                        color_to: "",
+                        badges: [],
+                      });
 
                       this.requestUpdate();
                       this._emitConfigChanged();
@@ -1905,7 +1997,7 @@ if (!customElements.get(EDITOR_TAG)) {
           <div class="entity-header">
             <div class="entity-title">Entity ${entIdx + 1}</div>
             <div class="row-buttons">
-                <div class="button-group-label">${ent.name || "Entity"}</div>
+              <div class="button-group-label">${ent.name || "Entity"}</div>
               <mwc-button
                 raised
                 dense
@@ -1958,129 +2050,251 @@ if (!customElements.get(EDITOR_TAG)) {
             ? ""
             : html`
                 <div class="row-inline">
-                <span class="field-label">${ent.name || "Entity"}</span>
-                <div
+                  <span class="field-label">${ent.name || "Entity"}</span>
+                  <div
                     class="entity-picker-placeholder full-width"
                     id=${`entity-picker-${rowIdx}-${entIdx}`}
-                ></div>
-            </div>
-
+                  ></div>
+                </div>
 
                 <div class="row-inline">
-  <ha-select
-    label="Icon mode"
-    .value=${ent.icon_mode || "single"}
-    @selected=${(e) => {
-      const v = e.target.value || "single";
-      this._config.rows[rowIdx].entities[entIdx].icon_mode = v;
-      this._emitConfigChanged();
-    }}
-    @closed=${this._stopPropagation}
-  >
-    <mwc-list-item value="single">Single icon</mwc-list-item>
-    <mwc-list-item value="state">By state</mwc-list-item>
-  </ha-select>
+                  <ha-select
+                    label="Icon mode"
+                    .value=${ent.icon_mode || "single"}
+                    @selected=${(e) => {
+                      const v = e.target.value || "single";
+                      this._config.rows[rowIdx].entities[entIdx].icon_mode = v;
+                      this._emitConfigChanged();
+                    }}
+                    @closed=${this._stopPropagation}
+                  >
+                    <mwc-list-item value="single">Single icon</mwc-list-item>
+                    <mwc-list-item value="state">By state</mwc-list-item>
+                  </ha-select>
 
-  ${ (ent.icon_mode || "single") === "single" ? html`
-    <ha-icon-picker
-      label="Icon"
-      .hass=${this.hass}
-      .value=${ent.icon || ""}
-      @value-changed=${(e) => {
-        this._config.rows[rowIdx].entities[entIdx].icon =
-          e.detail.value;
-        this._emitConfigChanged();
-      }}
-      @closed=${this._stopPropagation}
-    ></ha-icon-picker>
-  ` : html`` }
+                  ${ (ent.icon_mode || "single") === "single"
+                    ? html`
+                        <ha-icon-picker
+                          label="Icon"
+                          .hass=${this.hass}
+                          .value=${ent.icon || ""}
+                          @value-changed=${(e) => {
+                            this._config.rows[rowIdx].entities[entIdx].icon =
+                              e.detail.value;
+                            this._emitConfigChanged();
+                          }}
+                          @closed=${this._stopPropagation}
+                        ></ha-icon-picker>
+                      `
+                    : html`` }
 
-  <ha-textfield
-    type="number"
-    label="Value font scale (1 = default)"
-    .value=${ent.value_font_size ?? 1.0}
-    min="0.1"
-    step="0.1"
-    @input=${(e) => {
-      const v = Number(e.target.value);
-      this._config.rows[rowIdx].entities[entIdx].value_font_size =
-        isNaN(v) ? 1.0 : v;
-      this._emitConfigChanged();
-    }}
-  ></ha-textfield>
+                  <ha-textfield
+                    type="number"
+                    label="Value font scale (1 = default)"
+                    .value=${ent.value_font_size ?? 1.0}
+                    min="0.1"
+                    step="0.1"
+                    @input=${(e) => {
+                      const v = Number(e.target.value);
+                      this._config.rows[rowIdx].entities[entIdx].value_font_size =
+                        isNaN(v) ? 1.0 : v;
+                      this._emitConfigChanged();
+                    }}
+                  ></ha-textfield>
 
-  <ha-textfield
-    type="number"
-    label="Label font scale (1 = default)"
-    .value=${ent.label_font_size ?? 1.0}
-    min="0.1"
-    step="0.1"
-    @input=${(e) => {
-      const v = Number(e.target.value);
-      this._config.rows[rowIdx].entities[entIdx].label_font_size =
-        isNaN(v) ? 1.0 : v;
-      this._emitConfigChanged();
-    }}
-  ></ha-textfield>
-</div>
+                  <ha-textfield
+                    type="number"
+                    label="Label font scale (1 = default)"
+                    .value=${ent.label_font_size ?? 1.0}
+                    min="0.1"
+                    step="0.1"
+                    @input=${(e) => {
+                      const v = Number(e.target.value);
+                      this._config.rows[rowIdx].entities[entIdx].label_font_size =
+                        isNaN(v) ? 1.0 : v;
+                      this._emitConfigChanged();
+                    }}
+                  ></ha-textfield>
+                </div>
 
-${ (ent.icon_mode || "single") === "state" ? html`
-  <div class="state-icons-block">
-    ${(ent.icon_states || []).map((m, mIdx) => html`
-      <div class="row-inline">
-        <ha-textfield
-          label="State match (e.g. on, off)"
-          .value=${m.state || ""}
-          @input=${(e) => {
-            const val = e.target.value;
-            this._config.rows[rowIdx].entities[entIdx].icon_states[mIdx].state = val;
-            this._emitConfigChanged();
-          }}
-        ></ha-textfield>
+                ${(ent.icon_mode || "single") === "state"
+                  ? html`
+                      <div class="state-icons-block">
+                        ${(ent.icon_states || []).map((m, mIdx) => html`
+                          <div class="interval-block">
+                            <div class="row-inline">
+                              <ha-textfield
+                                label="State match (e.g. on, off)"
+                                .value=${m.state || ""}
+                                @input=${(e) => {
+                                  const val = e.target.value;
+                                  this._config.rows[rowIdx].entities[entIdx]
+                                    .icon_states[mIdx].state = val;
+                                  this._emitConfigChanged();
+                                }}
+                              ></ha-textfield>
 
-        <ha-icon-picker
-          label="Icon"
-          .hass=${this.hass}
-          .value=${m.icon || ""}
-          @value-changed=${(e) => {
-            this._config.rows[rowIdx].entities[entIdx].icon_states[mIdx].icon =
-              e.detail.value;
-            this._emitConfigChanged();
-          }}
-          @closed=${this._stopPropagation}
-        ></ha-icon-picker>
+                              <ha-icon-picker
+                                label="Icon"
+                                .hass=${this.hass}
+                                .value=${m.icon || ""}
+                                @value-changed=${(e) => {
+                                  this._config.rows[rowIdx].entities[entIdx]
+                                    .icon_states[mIdx].icon =
+                                    e.detail.value;
+                                  this._emitConfigChanged();
+                                }}
+                                @closed=${this._stopPropagation}
+                              ></ha-icon-picker>
 
-        <mwc-button
-          dense
-          class="danger"
-          @click=${() => {
-            this._config.rows[rowIdx].entities[entIdx].icon_states.splice(mIdx,1);
-            this.requestUpdate();
-            this._emitConfigChanged();
-          }}
-        >Delete</mwc-button>
-      </div>
-    `)}
-    <mwc-button
-      dense
-      @click=${() => {
-        if (!this._config.rows[rowIdx].entities[entIdx].icon_states)
-          this._config.rows[rowIdx].entities[entIdx].icon_states = [];
-        this._config.rows[rowIdx].entities[entIdx].icon_states.push({
-          state: "",
-          icon: "",
-        });
-        this.requestUpdate();
-        this._emitConfigChanged();
-      }}
-    >Add state icon</mwc-button>
-  </div>
-` : "" }
+                              <mwc-button
+                                dense
+                                class="danger"
+                                @click=${() => {
+                                  this._config.rows[rowIdx].entities[entIdx]
+                                    .icon_states.splice(mIdx,1);
+                                  this.requestUpdate();
+                                  this._emitConfigChanged();
+                                }}
+                              >Delete</mwc-button>
+                            </div>
 
-                
-                
-                
-                
+                            <div class="row-inline">
+                              <ha-textfield
+                                label="Label (optional)"
+                                .value=${m.label || ""}
+                                @input=${(e) => {
+                                  const val = e.target.value;
+                                  this._config.rows[rowIdx].entities[entIdx]
+                                    .icon_states[mIdx].label = val;
+                                  this._emitConfigChanged();
+                                }}
+                              ></ha-textfield>
+                              <ha-textfield
+                                label="Suffix text (optional, supports variables)"
+                                .value=${m.suffix_text || ""}
+                                @input=${(e) => {
+                                  const val = e.target.value;
+                                  this._config.rows[rowIdx].entities[entIdx]
+                                    .icon_states[mIdx].suffix_text = val;
+                                  this._emitConfigChanged();
+                                }}
+                              ></ha-textfield>
+                            </div>
+                            <div class="help-text">
+                              Variables: &lt;state&gt;, &lt;unit&gt;, &lt;dimmer_pct&gt;,
+                              &lt;source&gt;, &lt;title&gt;, &lt;artist&gt;, &lt;album&gt;,
+                              &lt;title_artist&gt;
+                            </div>
+
+                            <div class="interval-line">
+                              <div class="color-group">
+                                <div
+                                  class="color-preview"
+                                  style="background:${m.color_from || "#000"}"
+                                  @click=${(e) =>
+                                    this._openStateColorPicker(
+                                      e,
+                                      rowIdx,
+                                      entIdx,
+                                      mIdx,
+                                      "color_from"
+                                    )}
+                                ></div>
+                                <ha-textfield
+                                  label="Gradient from (optional)"
+                                  .value=${m.color_from || ""}
+                                  @input=${(e) => {
+                                    this._updateStateColorField(
+                                      rowIdx,
+                                      entIdx,
+                                      mIdx,
+                                      "color_from",
+                                      e.target.value
+                                    );
+                                  }}
+                                ></ha-textfield>
+                              </div>
+
+                              <div class="color-group">
+                                <div
+                                  class="color-preview"
+                                  style="background:${m.color_to || "#000"}"
+                                  @click=${(e) =>
+                                    this._openStateColorPicker(
+                                      e,
+                                      rowIdx,
+                                      entIdx,
+                                      mIdx,
+                                      "color_to"
+                                    )}
+                                ></div>
+                                <ha-textfield
+                                  label="Gradient to (optional)"
+                                  .value=${m.color_to || ""}
+                                  @input=${(e) => {
+                                    this._updateStateColorField(
+                                      rowIdx,
+                                      entIdx,
+                                      mIdx,
+                                      "color_to",
+                                      e.target.value
+                                    );
+                                  }}
+                                ></ha-textfield>
+                              </div>
+
+                              <div class="color-group">
+                                <div
+                                  class="color-preview border"
+                                  style="background:${m.text_color || "#FFF"}"
+                                  @click=${(e) =>
+                                    this._openStateColorPicker(
+                                      e,
+                                      rowIdx,
+                                      entIdx,
+                                      mIdx,
+                                      "text_color"
+                                    )}
+                                ></div>
+                                <ha-textfield
+                                  label="Text color (optional)"
+                                  .value=${m.text_color || ""}
+                                  @input=${(e) => {
+                                    this._updateStateColorField(
+                                      rowIdx,
+                                      entIdx,
+                                      mIdx,
+                                      "text_color",
+                                      e.target.value
+                                    );
+                                  }}
+                                ></ha-textfield>
+                              </div>
+                            </div>
+                          </div>
+                        `)}
+                        <mwc-button
+                          dense
+                          @click=${() => {
+                            if (!this._config.rows[rowIdx].entities[entIdx].icon_states)
+                              this._config.rows[rowIdx].entities[entIdx].icon_states = [];
+                            this._config.rows[rowIdx].entities[entIdx].icon_states.push({
+                              state: "",
+                              icon: "",
+                              label: "",
+                              color_from: "",
+                              color_to: "",
+                              text_color: "",
+                              suffix_text: "",
+                            });
+                            this.requestUpdate();
+                            this._emitConfigChanged();
+                          }}
+                        >Add state icon</mwc-button>
+                      </div>
+                    `
+                  : ""}
 
                 <div class="row-inline">
                   <ha-textfield
@@ -2176,10 +2390,6 @@ ${ (ent.icon_mode || "single") === "state" ? html`
                     @click=${(() => {
                       if (!this._config.rows[rowIdx].entities[entIdx].badges)
                         this._config.rows[rowIdx].entities[entIdx].badges = [];
-//                      if (
-                        //this._config.rows[rowIdx].entities[entIdx].badges.length >= 3
-//                      )
-//                        return;
                       this._config.rows[rowIdx].entities[entIdx].badges.push({
                         entity: "",
                         icon: "",
@@ -2383,6 +2593,7 @@ ${ (ent.icon_mode || "single") === "state" ? html`
                   ></ha-icon-picker>
                 `
               : ""}
+
             <ha-textfield
               label="Label"
               .value=${b.label || ""}
@@ -2474,20 +2685,20 @@ ${ (ent.icon_mode || "single") === "state" ? html`
         .color-preview.border {
           border: 1px solid rgba(0, 0, 0, 0.4);
         }
-.interval-block {
-  border-radius: 8px;
-  border: 1px solid var(--divider-color, rgba(0,0,0,0.12));
-  background: var(--card-background-color, #fff);
-  padding: 8px;
-  margin-bottom: 10px;
-}
-.row-block {
-  border-radius: 8px;
-  border: 1px solid var(--divider-color, rgba(0,0,0,0.12));
-  background: var(--card-background-color, #fff);
-  padding: 8px;
-  margin-bottom: 12px;
-}
+        .interval-block {
+          border-radius: 8px;
+          border: 1px solid var(--divider-color, rgba(0,0,0,0.12));
+          background: var(--card-background-color, #fff);
+          padding: 8px;
+          margin-bottom: 10px;
+        }
+        .row-block {
+          border-radius: 8px;
+          border: 1px solid var(--divider-color, rgba(0,0,0,0.12));
+          background: var(--card-background-color, #fff);
+          padding: 8px;
+          margin-bottom: 12px;
+        }
         .row-header {
           display: flex;
           justify-content: space-between;
@@ -2518,12 +2729,12 @@ ${ (ent.icon_mode || "single") === "state" ? html`
           flex-direction: column;
           gap: 8px;
         }
-.entity-block {
-  border-radius: 6px;
-  padding: 6px;
-  border: 1px solid var(--divider-color, rgba(0,0,0,0.12));
-  background: var(--card-background-color, #fff);
-}
+        .entity-block {
+          border-radius: 6px;
+          padding: 6px;
+          border: 1px solid var(--divider-color, rgba(0,0,0,0.12));
+          background: var(--card-background-color, #fff);
+        }
         .entity-header {
           display: flex;
           justify-content: space-between;
@@ -2539,36 +2750,35 @@ ${ (ent.icon_mode || "single") === "state" ? html`
           flex-direction: column;
           gap: 4px;
         }
-.badge-block {
-  border-radius: 4px;
-  padding: 4px;
-  border: 1px dashed var(--divider-color, rgba(0,0,0,0.18));
-  background: var(--card-background-color, #fff);
-}
-mwc-button {
-  /* När mwc-button är uppgraderad används --mdc-theme-primary av material-komponenten */
-  --mdc-theme-primary: var(--primary-color);
-  text-transform: none;
-  font-weight: 500;
-
-  /* Fallback-styling när den INTE är uppgraderad (då är det bara ett vanligt element) */
-  display: inline-block;
-  padding: 4px 10px;
-  margin: 2px 0;
-  border-radius: 4px;
-  border: none;
-  cursor: pointer;
-  font-size: 0.8rem;
-  background: var(--primary-color, #03a9f4);
-  color: #fff;
-}
-
-/* Danger-variant – alltid röd */
-mwc-button.danger {
-  --mdc-theme-primary: var(--error-color);
-  background: var(--error-color, #ff5252);
-}
-
+        .badge-block {
+          border-radius: 4px;
+          padding: 4px;
+          border: 1px dashed var(--divider-color, rgba(0,0,0,0.18));
+          background: var(--card-background-color, #fff);
+        }
+        .help-text {
+          font-size: 0.7rem;
+          opacity: 0.7;
+          margin-bottom: 4px;
+        }
+        mwc-button {
+          --mdc-theme-primary: var(--primary-color);
+          text-transform: none;
+          font-weight: 500;
+          display: inline-block;
+          padding: 4px 10px;
+          margin: 2px 0;
+          border-radius: 4px;
+          border: none;
+          cursor: pointer;
+          font-size: 0.8rem;
+          background: var(--primary-color, #03a9f4);
+          color: #fff;
+        }
+        mwc-button.danger {
+          --mdc-theme-primary: var(--error-color);
+          background: var(--error-color, #ff5252);
+        }
       `;
     }
   }
