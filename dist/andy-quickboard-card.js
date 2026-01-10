@@ -1,6 +1,6 @@
 /**
  * Andy Quickboard Card
- * v1.0.3
+ * v1.0.4
  * ------------------------------------------------------------------
  * Developed by: Andreas ("AndyBonde") with some help from AI :).
  *
@@ -21,7 +21,7 @@ const CARD_TAG = "andy-quickboard-card";
 const EDITOR_TAG = "andy-quickboard-card-editor";
 
 console.info(
-  `%c Andy Quickboard Card %c v1.0.3 loaded `,
+  `%c Andy Quickboard Card %c v1.0.4 loaded `,
   "color: white; background: #1565C0; padding: 4px 8px; border-radius: 4px 0 0 4px;",
   "color: white; background: #1E88E5; padding: 4px 8px; border-radius: 0 4px 4px 0;"
 );
@@ -420,7 +420,7 @@ if (!customElements.get(CARD_TAG)) {
       const iconEl = document.createElement("ha-icon");
 
       let iconName = "";
-      // 1) State-baserade ikoner om aktiverat
+      // 1) State-based icons if enabled
       if (
         stateObj &&
         entCfg.icon_mode === "state" &&
@@ -436,14 +436,14 @@ if (!customElements.get(CARD_TAG)) {
         }
       }
 
-      // 2) Fallback: custom ikon / entitetens ikon
+      // 2) Fallback: custom icon / entity icon
       if (!iconName) {
         iconName =
           entCfg.icon ||
           (stateObj ? stateObj.attributes.icon || "" : "");
       }
 
-      // 3) Sista fallback
+      // 3) Last fallback
       if (iconName) {
         iconEl.setAttribute("icon", iconName);
       } else if (entityId) {
@@ -517,7 +517,6 @@ if (!customElements.get(CARD_TAG)) {
       if (entCfg.badges && entCfg.badges.length) {
         const badgesRow = document.createElement("div");
         badgesRow.classList.add("badges-row");
-        //entCfg.badges.slice(0, 3).forEach((badgeCfg) => {
         entCfg.badges.forEach((badgeCfg) => {
           if (!badgeCfg.entity) return;
           const bState =
@@ -567,7 +566,6 @@ if (!customElements.get(CARD_TAG)) {
           const bTextWrap = document.createElement("div");
           bTextWrap.classList.add("badge-text");
 
-          // label-rad för alla UTOM media/alarm (de använder label i value-raden)
           if (badgeCfg.label && type !== "media" && type !== "alarm") {
             const bLabel = document.createElement("div");
             bLabel.classList.add("badge-label");
@@ -711,7 +709,7 @@ if (!customElements.get(CARD_TAG)) {
             const mode = badgeCfg.media_info_mode || "title_artist";
             let txt = "—";
             if (bState) {
-              const a = bState.attributes ||{};
+              const a = bState.attributes || {};
               const title = a.media_title || "";
               const artist = a.media_artist || "";
               const album =
@@ -922,7 +920,6 @@ if (!customElements.get(CARD_TAG)) {
       };
       const intervals = this._config.color_intervals || [];
 
-      // Per-entity custom color mode (unchanged)
       if (entCfg && entCfg.color_mode === "custom") {
         const cf = entCfg.color_from || "#1E88E5";
         const ct = entCfg.color_to || cf;
@@ -938,7 +935,6 @@ if (!customElements.get(CARD_TAG)) {
       const numericVal = Number(rawState);
       const hasNumeric = !isNaN(numericVal);
 
-      // 1) Globala intervall – som tidigare
       for (const i of intervals) {
         const from = i.from ?? 0;
         const to = i.to ?? 0;
@@ -956,9 +952,7 @@ if (!customElements.get(CARD_TAG)) {
             result.text_color = txt;
             result.state_label = i.state_text || "";
             result.suffix_text = i.suffix_text || "";
-            // OBS: vi fortsätter inte return här – per-entity overrides kan
-            // fortfarande få "sista ordet" nedan.
-            break;
+            return result;
           }
           continue;
         }
@@ -969,44 +963,9 @@ if (!customElements.get(CARD_TAG)) {
           result.text_color = txt;
           result.state_label = "";
           result.suffix_text = i.suffix_text || "";
-          break;
+          return result;
         }
       }
-
-      // 2) Per-entity, per-state overrides via icon_states
-      if (
-        entCfg &&
-        entCfg.icon_mode === "state" &&
-        Array.isArray(entCfg.icon_states)
-      ) {
-        const lower = rawState.toLowerCase();
-        const match = entCfg.icon_states.find(
-          (m) => String(m.state ?? "").toLowerCase() === lower
-        );
-        if (match) {
-          // Färg override
-          if (match.color_from || match.color_to) {
-            const cf = match.color_from || match.color_to || "#1E88E5";
-            const ct = match.color_to || cf;
-            result.background =
-              cf === ct ? cf : `linear-gradient(135deg, ${cf}, ${ct})`;
-          }
-          if (match.text_color) {
-            result.text_color = match.text_color;
-          }
-
-          // Label override
-          if (typeof match.label === "string" && match.label.length > 0) {
-            result.state_label = match.label;
-          }
-
-          // Suffix override (kan vara tom sträng för "inget suffix")
-          if (typeof match.suffix_text === "string") {
-            result.suffix_text = match.suffix_text;
-          }
-        }
-      }
-
       return result;
     }
 
@@ -1046,12 +1005,11 @@ if (!customElements.get(CARD_TAG)) {
         }
         .tiles-row {
           display: flex;
-          flex-wrap: wrap;
+          flex-direction: row;
           gap: 12px;
         }
         .tiles-row > .tile {
           flex: 1 1 0;
-          min-width: 50px;
         }
         .tile {
           position: relative;
@@ -1244,130 +1202,6 @@ if (!customElements.get(EDITOR_TAG)) {
       return ep;
     }
 
-    _openColorPicker(e, idx, field) {
-      e.stopPropagation();
-      const intervals = this._config.color_intervals || [];
-      const current = intervals[idx]?.[field] || "#000000";
-
-      const input = document.createElement("input");
-      input.type = "color";
-      input.value = current.startsWith("#") ? current : "#000000";
-      input.style.position = "fixed";
-
-      const rect = e.currentTarget.getBoundingClientRect();
-      input.style.left = `${rect.left + rect.width / 2}px`;
-      input.style.top = `${rect.top + rect.height / 2}px`;
-
-      document.body.appendChild(input);
-
-      const onInput = (ev2) => {
-        const val = ev2.target.value;
-        this._updateIntervalField(idx, field, val);
-      };
-      const onChange = () => {
-        document.body.removeChild(input);
-        input.removeEventListener("input", onInput);
-        input.removeEventListener("change", onChange);
-      };
-      input.addEventListener("input", onInput);
-      input.addEventListener("change", onChange);
-      input.click();
-    }
-
-    _openEntityColorPicker(e, rowIdx, entIdx, field) {
-      e.stopPropagation();
-      const rows = this._config.rows || [];
-      const ent = rows[rowIdx]?.entities?.[entIdx] || {};
-      const current = ent[field] || "#000000";
-
-      const input = document.createElement("input");
-      input.type = "color";
-      input.value = current.startsWith("#") ? current : "#000000";
-      input.style.position = "fixed";
-
-      const rect = e.currentTarget.getBoundingClientRect();
-      input.style.left = `${rect.left + rect.width / 2}px`;
-      input.style.top = `${rect.top + rect.height / 2}px`;
-
-      document.body.appendChild(input);
-
-      const onInput = (ev2) => {
-        const val = ev2.target.value;
-        this._updateEntityColorField(rowIdx, entIdx, field, val);
-      };
-      const onChange = () => {
-        document.body.removeChild(input);
-        input.removeEventListener("input", onInput);
-        input.removeEventListener("change", onChange);
-      };
-      input.addEventListener("input", onInput);
-      input.addEventListener("change", onChange);
-      input.click();
-    }
-
-    // NEW: State-level color picker for icon_states
-    _openStateColorPicker(e, rowIdx, entIdx, stateIdx, field) {
-      e.stopPropagation();
-      const rows = this._config.rows || [];
-      const ent = rows[rowIdx]?.entities?.[entIdx] || {};
-      const states = ent.icon_states || [];
-      const st = states[stateIdx] || {};
-      const current = st[field] || "#000000";
-
-      const input = document.createElement("input");
-      input.type = "color";
-      input.value = current.startsWith("#") ? current : "#000000";
-      input.style.position = "fixed";
-
-      const rect = e.currentTarget.getBoundingClientRect();
-      input.style.left = `${rect.left + rect.width / 2}px`;
-      input.style.top = `${rect.top + rect.height / 2}px`;
-
-      document.body.appendChild(input);
-
-      const onInput = (ev2) => {
-        const val = ev2.target.value;
-        this._updateStateColorField(rowIdx, entIdx, stateIdx, field, val);
-      };
-      const onChange = () => {
-        document.body.removeChild(input);
-        input.removeEventListener("input", onInput);
-        input.removeEventListener("change", onChange);
-      };
-      input.addEventListener("input", onInput);
-      input.addEventListener("change", onChange);
-      input.click();
-    }
-
-    _openGlobalColorPicker(e, field) {
-      e.stopPropagation();
-      const current = this._config[field] || "#FFFFFF";
-
-      const input = document.createElement("input");
-      input.type = "color";
-      input.value = current.startsWith("#") ? current : "#FFFFFF";
-      input.style.position = "fixed";
-
-      const rect = e.currentTarget.getBoundingClientRect();
-      input.style.left = `${rect.left + rect.width / 2}px`;
-      input.style.top = `${rect.top + rect.height / 2}px`;
-
-      document.body.appendChild(input);
-
-      const onInput = (ev2) => {
-        const val = ev2.target.value;
-        this._updateGlobalColorField(field, val);
-      };
-      const onChange = () => {
-        document.body.removeChild(input);
-        input.removeEventListener("input", onInput);
-        input.removeEventListener("change", onChange);
-      };
-      input.addEventListener("input", onInput);
-      input.addEventListener("change", onChange);
-      input.click();
-    }
-
     _updateGlobalColorField(field, value) {
       this._config[field] = value;
       this.requestUpdate();
@@ -1412,37 +1246,6 @@ if (!customElements.get(EDITOR_TAG)) {
         };
       }
       this._config.rows[rowIdx].entities[entIdx][field] = value;
-      this.requestUpdate();
-      this._emitConfigChanged();
-    }
-
-    // NEW: update helper for icon_states color/text fields
-    _updateStateColorField(rowIdx, entIdx, stateIdx, field, value) {
-      if (!this._config.rows) this._config.rows = [];
-      if (!this._config.rows[rowIdx]) this._config.rows[rowIdx] = { entities: [] };
-      if (!this._config.rows[rowIdx].entities)
-        this._config.rows[rowIdx].entities = [];
-      if (!this._config.rows[rowIdx].entities[entIdx]) {
-        this._config.rows[rowIdx].entities[entIdx] = {
-          icon_states: [],
-        };
-      }
-      if (!this._config.rows[rowIdx].entities[entIdx].icon_states) {
-        this._config.rows[rowIdx].entities[entIdx].icon_states = [];
-      }
-      if (!this._config.rows[rowIdx].entities[entIdx].icon_states[stateIdx]) {
-        this._config.rows[rowIdx].entities[entIdx].icon_states[stateIdx] = {
-          state: "",
-          icon: "",
-          label: "",
-          color_from: "",
-          color_to: "",
-          text_color: "",
-          suffix_text: "",
-        };
-      }
-      this._config.rows[rowIdx].entities[entIdx].icon_states[stateIdx][field] =
-        value;
       this.requestUpdate();
       this._emitConfigChanged();
     }
@@ -1651,12 +1454,17 @@ if (!customElements.get(EDITOR_TAG)) {
           </div>
           <div class="row-inline">
             <div class="color-group">
-              <div
-                class="color-preview border"
-                style="background:${this._config.dimmer_slider_color || "#FFFFFF"}"
-                @click=${(e) =>
-                  this._openGlobalColorPicker(e, "dimmer_slider_color")}
-              ></div>
+              <input
+                type="color"
+                class="color-input"
+                .value=${this._config.dimmer_slider_color || "#FFFFFF"}
+                @input=${(e) =>
+                  this._updateGlobalColorField(
+                    "dimmer_slider_color",
+                    e.target.value
+                  )}
+                @click=${this._stopPropagation}
+              />
               <ha-textfield
                 label="Dimmer slider color"
                 .value=${this._config.dimmer_slider_color || ""}
@@ -1698,12 +1506,18 @@ if (!customElements.get(EDITOR_TAG)) {
 
                 <div class="interval-line">
                   <div class="color-group">
-                    <div
-                      class="color-preview"
-                      style="background:${interval.color_from || "#000"}"
-                      @click=${(e) =>
-                        this._openColorPicker(e, idx, "color_from")}
-                    ></div>
+                    <input
+                      type="color"
+                      class="color-input"
+                      .value=${interval.color_from || "#000000"}
+                      @input=${(e) =>
+                        this._updateIntervalField(
+                          idx,
+                          "color_from",
+                          e.target.value
+                        )}
+                      @click=${this._stopPropagation}
+                    />
                     <ha-textfield
                       label="Gradient from"
                       .value=${interval.color_from || ""}
@@ -1717,11 +1531,18 @@ if (!customElements.get(EDITOR_TAG)) {
                   </div>
 
                   <div class="color-group">
-                    <div
-                      class="color-preview"
-                      style="background:${interval.color_to || "#000"}"
-                      @click=${(e) => this._openColorPicker(e, idx, "color_to")}
-                    ></div>
+                    <input
+                      type="color"
+                      class="color-input"
+                      .value=${interval.color_to || "#000000"}
+                      @input=${(e) =>
+                        this._updateIntervalField(
+                          idx,
+                          "color_to",
+                          e.target.value
+                        )}
+                      @click=${this._stopPropagation}
+                    />
                     <ha-textfield
                       label="Gradient to"
                       .value=${interval.color_to || ""}
@@ -1735,12 +1556,18 @@ if (!customElements.get(EDITOR_TAG)) {
                   </div>
 
                   <div class="color-group">
-                    <div
-                      class="color-preview border"
-                      style="background:${interval.text_color || "#FFF"}"
-                      @click=${(e) =>
-                        this._openColorPicker(e, idx, "text_color")}
-                    ></div>
+                    <input
+                      type="color"
+                      class="color-input"
+                      .value=${interval.text_color || "#FFFFFF"}
+                      @input=${(e) =>
+                        this._updateIntervalField(
+                          idx,
+                          "text_color",
+                          e.target.value
+                        )}
+                      @click=${this._stopPropagation}
+                    />
                     <ha-textfield
                       label="Text color"
                       .value=${interval.text_color || ""}
@@ -2076,21 +1903,19 @@ if (!customElements.get(EDITOR_TAG)) {
                     <mwc-list-item value="state">By state</mwc-list-item>
                   </ha-select>
 
-                  ${ (ent.icon_mode || "single") === "single"
-                    ? html`
-                        <ha-icon-picker
-                          label="Icon"
-                          .hass=${this.hass}
-                          .value=${ent.icon || ""}
-                          @value-changed=${(e) => {
-                            this._config.rows[rowIdx].entities[entIdx].icon =
-                              e.detail.value;
-                            this._emitConfigChanged();
-                          }}
-                          @closed=${this._stopPropagation}
-                        ></ha-icon-picker>
-                      `
-                    : html`` }
+                  ${ (ent.icon_mode || "single") === "single" ? html`
+                    <ha-icon-picker
+                      label="Icon"
+                      .hass=${this.hass}
+                      .value=${ent.icon || ""}
+                      @value-changed=${(e) => {
+                        this._config.rows[rowIdx].entities[entIdx].icon =
+                          e.detail.value;
+                        this._emitConfigChanged();
+                      }}
+                      @closed=${this._stopPropagation}
+                    ></ha-icon-picker>
+                  ` : html`` }
 
                   <ha-textfield
                     type="number"
@@ -2121,184 +1946,58 @@ if (!customElements.get(EDITOR_TAG)) {
                   ></ha-textfield>
                 </div>
 
-                ${(ent.icon_mode || "single") === "state"
-                  ? html`
-                      <div class="state-icons-block">
-                        ${(ent.icon_states || []).map((m, mIdx) => html`
-                          <div class="interval-block">
-                            <div class="row-inline">
-                              <ha-textfield
-                                label="State match (e.g. on, off)"
-                                .value=${m.state || ""}
-                                @input=${(e) => {
-                                  const val = e.target.value;
-                                  this._config.rows[rowIdx].entities[entIdx]
-                                    .icon_states[mIdx].state = val;
-                                  this._emitConfigChanged();
-                                }}
-                              ></ha-textfield>
+                ${ (ent.icon_mode || "single") === "state" ? html`
+                  <div class="state-icons-block">
+                    ${(ent.icon_states || []).map((m, mIdx) => html`
+                      <div class="row-inline">
+                        <ha-textfield
+                          label="State match (e.g. on, off)"
+                          .value=${m.state || ""}
+                          @input=${(e) => {
+                            const val = e.target.value;
+                            this._config.rows[rowIdx].entities[entIdx].icon_states[mIdx].state = val;
+                            this._emitConfigChanged();
+                          }}
+                        ></ha-textfield>
 
-                              <ha-icon-picker
-                                label="Icon"
-                                .hass=${this.hass}
-                                .value=${m.icon || ""}
-                                @value-changed=${(e) => {
-                                  this._config.rows[rowIdx].entities[entIdx]
-                                    .icon_states[mIdx].icon =
-                                    e.detail.value;
-                                  this._emitConfigChanged();
-                                }}
-                                @closed=${this._stopPropagation}
-                              ></ha-icon-picker>
+                        <ha-icon-picker
+                          label="Icon"
+                          .hass=${this.hass}
+                          .value=${m.icon || ""}
+                          @value-changed=${(e) => {
+                            this._config.rows[rowIdx].entities[entIdx].icon_states[mIdx].icon =
+                              e.detail.value;
+                            this._emitConfigChanged();
+                          }}
+                          @closed=${this._stopPropagation}
+                        ></ha-icon-picker>
 
-                              <mwc-button
-                                dense
-                                class="danger"
-                                @click=${() => {
-                                  this._config.rows[rowIdx].entities[entIdx]
-                                    .icon_states.splice(mIdx,1);
-                                  this.requestUpdate();
-                                  this._emitConfigChanged();
-                                }}
-                              >Delete</mwc-button>
-                            </div>
-
-                            <div class="row-inline">
-                              <ha-textfield
-                                label="Label (optional)"
-                                .value=${m.label || ""}
-                                @input=${(e) => {
-                                  const val = e.target.value;
-                                  this._config.rows[rowIdx].entities[entIdx]
-                                    .icon_states[mIdx].label = val;
-                                  this._emitConfigChanged();
-                                }}
-                              ></ha-textfield>
-                              <ha-textfield
-                                label="Suffix text (optional, supports variables)"
-                                .value=${m.suffix_text || ""}
-                                @input=${(e) => {
-                                  const val = e.target.value;
-                                  this._config.rows[rowIdx].entities[entIdx]
-                                    .icon_states[mIdx].suffix_text = val;
-                                  this._emitConfigChanged();
-                                }}
-                              ></ha-textfield>
-                            </div>
-                            <div class="help-text">
-                              Variables: &lt;state&gt;, &lt;unit&gt;, &lt;dimmer_pct&gt;,
-                              &lt;source&gt;, &lt;title&gt;, &lt;artist&gt;, &lt;album&gt;,
-                              &lt;title_artist&gt;
-                            </div>
-
-                            <div class="interval-line">
-                              <div class="color-group">
-                                <div
-                                  class="color-preview"
-                                  style="background:${m.color_from || "#000"}"
-                                  @click=${(e) =>
-                                    this._openStateColorPicker(
-                                      e,
-                                      rowIdx,
-                                      entIdx,
-                                      mIdx,
-                                      "color_from"
-                                    )}
-                                ></div>
-                                <ha-textfield
-                                  label="Gradient from (optional)"
-                                  .value=${m.color_from || ""}
-                                  @input=${(e) => {
-                                    this._updateStateColorField(
-                                      rowIdx,
-                                      entIdx,
-                                      mIdx,
-                                      "color_from",
-                                      e.target.value
-                                    );
-                                  }}
-                                ></ha-textfield>
-                              </div>
-
-                              <div class="color-group">
-                                <div
-                                  class="color-preview"
-                                  style="background:${m.color_to || "#000"}"
-                                  @click=${(e) =>
-                                    this._openStateColorPicker(
-                                      e,
-                                      rowIdx,
-                                      entIdx,
-                                      mIdx,
-                                      "color_to"
-                                    )}
-                                ></div>
-                                <ha-textfield
-                                  label="Gradient to (optional)"
-                                  .value=${m.color_to || ""}
-                                  @input=${(e) => {
-                                    this._updateStateColorField(
-                                      rowIdx,
-                                      entIdx,
-                                      mIdx,
-                                      "color_to",
-                                      e.target.value
-                                    );
-                                  }}
-                                ></ha-textfield>
-                              </div>
-
-                              <div class="color-group">
-                                <div
-                                  class="color-preview border"
-                                  style="background:${m.text_color || "#FFF"}"
-                                  @click=${(e) =>
-                                    this._openStateColorPicker(
-                                      e,
-                                      rowIdx,
-                                      entIdx,
-                                      mIdx,
-                                      "text_color"
-                                    )}
-                                ></div>
-                                <ha-textfield
-                                  label="Text color (optional)"
-                                  .value=${m.text_color || ""}
-                                  @input=${(e) => {
-                                    this._updateStateColorField(
-                                      rowIdx,
-                                      entIdx,
-                                      mIdx,
-                                      "text_color",
-                                      e.target.value
-                                    );
-                                  }}
-                                ></ha-textfield>
-                              </div>
-                            </div>
-                          </div>
-                        `)}
                         <mwc-button
                           dense
+                          class="danger"
                           @click=${() => {
-                            if (!this._config.rows[rowIdx].entities[entIdx].icon_states)
-                              this._config.rows[rowIdx].entities[entIdx].icon_states = [];
-                            this._config.rows[rowIdx].entities[entIdx].icon_states.push({
-                              state: "",
-                              icon: "",
-                              label: "",
-                              color_from: "",
-                              color_to: "",
-                              text_color: "",
-                              suffix_text: "",
-                            });
+                            this._config.rows[rowIdx].entities[entIdx].icon_states.splice(mIdx,1);
                             this.requestUpdate();
                             this._emitConfigChanged();
                           }}
-                        >Add state icon</mwc-button>
+                        >Delete</mwc-button>
                       </div>
-                    `
-                  : ""}
+                    `)}
+                    <mwc-button
+                      dense
+                      @click=${() => {
+                        if (!this._config.rows[rowIdx].entities[entIdx].icon_states)
+                          this._config.rows[rowIdx].entities[entIdx].icon_states = [];
+                        this._config.rows[rowIdx].entities[entIdx].icon_states.push({
+                          state: "",
+                          icon: "",
+                        });
+                        this.requestUpdate();
+                        this._emitConfigChanged();
+                      }}
+                    >Add state icon</mwc-button>
+                  </div>
+                ` : "" }
 
                 <div class="row-inline">
                   <ha-textfield
@@ -2332,17 +2031,19 @@ if (!customElements.get(EDITOR_TAG)) {
                   ? html`
                       <div class="row-inline">
                         <div class="color-group">
-                          <div
-                            class="color-preview"
-                            style="background:${ent.color_from || "#000"}"
-                            @click=${(e) =>
-                              this._openEntityColorPicker(
-                                e,
+                          <input
+                            type="color"
+                            class="color-input"
+                            .value=${ent.color_from || "#000000"}
+                            @input=${(e) =>
+                              this._updateEntityColorField(
                                 rowIdx,
                                 entIdx,
-                                "color_from"
+                                "color_from",
+                                e.target.value
                               )}
-                          ></div>
+                            @click=${this._stopPropagation}
+                          />
                           <ha-textfield
                             label="Gradient from"
                             .value=${ent.color_from || ""}
@@ -2357,17 +2058,19 @@ if (!customElements.get(EDITOR_TAG)) {
                         </div>
 
                         <div class="color-group">
-                          <div
-                            class="color-preview"
-                            style="background:${ent.color_to || "#000"}"
-                            @click=${(e) =>
-                              this._openEntityColorPicker(
-                                e,
+                          <input
+                            type="color"
+                            class="color-input"
+                            .value=${ent.color_to || "#000000"}
+                            @input=${(e) =>
+                              this._updateEntityColorField(
                                 rowIdx,
                                 entIdx,
-                                "color_to"
+                                "color_to",
+                                e.target.value
                               )}
-                          ></div>
+                            @click=${this._stopPropagation}
+                          />
                           <ha-textfield
                             label="Gradient to"
                             .value=${ent.color_to || ""}
@@ -2597,7 +2300,6 @@ if (!customElements.get(EDITOR_TAG)) {
                   ></ha-icon-picker>
                 `
               : ""}
-
             <ha-textfield
               label="Label"
               .value=${b.label || ""}
@@ -2689,6 +2391,15 @@ if (!customElements.get(EDITOR_TAG)) {
         .color-preview.border {
           border: 1px solid rgba(0, 0, 0, 0.4);
         }
+        .color-input {
+          width: 36px;
+          height: 32px;
+          border-radius: 4px;
+          border: 1px solid rgba(0, 0, 0, 0.3);
+          padding: 0;
+          background: transparent;
+          box-sizing: border-box;
+        }
         .interval-block {
           border-radius: 8px;
           border: 1px solid var(--divider-color, rgba(0,0,0,0.12));
@@ -2759,11 +2470,6 @@ if (!customElements.get(EDITOR_TAG)) {
           padding: 4px;
           border: 1px dashed var(--divider-color, rgba(0,0,0,0.18));
           background: var(--card-background-color, #fff);
-        }
-        .help-text {
-          font-size: 0.7rem;
-          opacity: 0.7;
-          margin-bottom: 4px;
         }
         mwc-button {
           --mdc-theme-primary: var(--primary-color);
