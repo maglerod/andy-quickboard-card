@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.0.4
+- Fixed colorpicker so it works on mobile devices
+
 ## v1.0.3
 - Added support for scaling automatically
 
