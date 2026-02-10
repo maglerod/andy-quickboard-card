@@ -1,6 +1,6 @@
 /**
  * Andy Quickboard Card
- * v1.0.4
+ * v1.0.5
  * ------------------------------------------------------------------
  * Developed by: Andreas ("AndyBonde") with some help from AI :).
  *
@@ -21,7 +21,7 @@ const CARD_TAG = "andy-quickboard-card";
 const EDITOR_TAG = "andy-quickboard-card-editor";
 
 console.info(
-  `%c Andy Quickboard Card %c v1.0.4 loaded `,
+  `%c Andy Quickboard Card %c v1.0.5 loaded `,
   "color: white; background: #1565C0; padding: 4px 8px; border-radius: 4px 0 0 4px;",
   "color: white; background: #1E88E5; padding: 4px 8px; border-radius: 0 4px 4px 0;"
 );
@@ -1173,33 +1173,39 @@ if (!customElements.get(EDITOR_TAG)) {
 
     _mkEntityControl(label, value, onChange) {
       const stop = (e) => e.stopPropagation();
-      const hasSelector = !!customElements.get("ha-selector");
 
-      if (hasSelector) {
-        const sel = document.createElement("ha-selector");
-        sel.label = label;
-        sel.selector = { entity: {} };
-        sel.value = value;
-        sel.hass = this.hass;
-        sel.addEventListener("value-changed", (e) => {
-          const v = e.detail?.value ?? e.target.value;
-          onChange(v);
-        });
-        sel.addEventListener("click", stop);
-        return sel;
-      }
+      // IMPORTANT:
+      // Do NOT create/use ha-entity-picker as fallback. In newer HA versions with
+      // Scoped Custom Element Registry, mixing pickers across multiple loaded
+      // custom cards can trigger "define ... ha-entity-picker already used".
+      //
+      // Instead, always use ha-selector. If it's not defined yet, the element
+      // will upgrade once HA finishes lazy-loading it.
+      const sel = document.createElement("ha-selector");
+      sel.label = label;
+      sel.selector = { entity: {} };
+      sel.value = value;
+      sel.hass = this.hass;
 
-      const ep = document.createElement("ha-entity-picker");
-      ep.label = label;
-      ep.allowCustomEntity = true;
-      ep.value = value;
-      ep.hass = this.hass;
-      ep.addEventListener("value-changed", (e) => {
-        const v = e.detail?.value ?? e.target.value;
+      sel.addEventListener("value-changed", (e) => {
+        const v = e.detail?.value ?? e.target?.value;
         onChange(v);
       });
-      ep.addEventListener("click", stop);
-      return ep;
+      sel.addEventListener("click", stop);
+
+      // Ensure props are re-applied after upgrade (when HA defines ha-selector)
+      if (!customElements.get("ha-selector") && customElements.whenDefined) {
+        customElements.whenDefined("ha-selector").then(() => {
+          try {
+            sel.label = label;
+            sel.selector = { entity: {} };
+            sel.value = value;
+            sel.hass = this.hass;
+          } catch (_) {}
+        });
+      }
+
+      return sel;
     }
 
     _updateGlobalColorField(field, value) {
