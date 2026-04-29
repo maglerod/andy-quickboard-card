@@ -1,6 +1,6 @@
 /**
  * Andy Quickboard Card
- * v1.0.5
+ * v1.0.6
  * ------------------------------------------------------------------
  * Developed by: Andreas ("AndyBonde") with some help from AI :).
  *
@@ -1171,6 +1171,41 @@ if (!customElements.get(EDITOR_TAG)) {
       ev.stopPropagation();
     }
 
+    _selectOptions(options) {
+      return (options || []).map((opt) => {
+        if (Array.isArray(opt)) {
+          return {
+            value: String(opt[0] ?? ""),
+            label: String(opt[1] ?? opt[0] ?? ""),
+          };
+        }
+        return {
+          value: String(opt?.value ?? ""),
+          label: String(opt?.label ?? opt?.value ?? ""),
+        };
+      });
+    }
+
+    _selectValue(ev, fallback = "") {
+      return ev?.detail?.value ?? ev?.target?.value ?? fallback;
+    }
+
+    _renderSelect(label, value, options, onChange) {
+      return html`
+        <ha-selector
+          .hass=${this.hass}
+          .label=${label}
+          .selector=${{ select: { mode: "dropdown", options: this._selectOptions(options) } }}
+          .value=${value ?? ""}
+          @value-changed=${(e) => {
+            this._stopPropagation(e);
+            onChange(this._selectValue(e, value ?? ""));
+          }}
+          @click=${this._stopPropagation}
+        ></ha-selector>
+      `;
+    }
+
     _mkEntityControl(label, value, onChange) {
       const stop = (e) => e.stopPropagation();
 
@@ -1418,45 +1453,43 @@ if (!customElements.get(EDITOR_TAG)) {
           </div>
 
           <div class="row-inline">
-            <ha-select
-              label="Box shadow"
-              .value=${this._shadowPresetFromCss(boxStyle.box_shadow)}
-              @selected=${(e) => {
+            ${this._renderSelect(
+              "Box shadow",
+              this._shadowPresetFromCss(boxStyle.box_shadow),
+              [
+                ["none", "None"],
+                ["soft", "Soft"],
+                ["medium", "Medium"],
+                ["strong", "Strong"],
+              ],
+              (preset) => {
                 this._ensureBoxStyle();
-                const preset = e.target.value || "medium";
                 this._config.box_style.box_shadow =
-                  this._shadowCssFromPreset(preset);
+                  this._shadowCssFromPreset(preset || "medium");
                 this._emitConfigChanged();
-              }}
-              @closed=${this._stopPropagation}
-            >
-              <mwc-list-item value="none">None</mwc-list-item>
-              <mwc-list-item value="soft">Soft</mwc-list-item>
-              <mwc-list-item value="medium">Medium</mwc-list-item>
-              <mwc-list-item value="strong">Strong</mwc-list-item>
-            </ha-select>
+              }
+            )}
           </div>
         </div>
 
         <div class="section">
           <div class="section-header">Badges</div>
           <div class="row-inline">
-            <ha-select
-              label="Badge background style"
-              .value=${this._config.badge_style || "pill"}
-              @selected=${(e) => {
-                const v = e.target.value || "pill";
-                this._config.badge_style = v;
+            ${this._renderSelect(
+              "Badge background style",
+              this._config.badge_style || "pill",
+              [
+                ["pill", "Pill background"],
+                ["pill-strong", "Pill strong"],
+                ["chip", "Chip / rectangle"],
+                ["underline", "Underline"],
+                ["none", "No background"],
+              ],
+              (v) => {
+                this._config.badge_style = v || "pill";
                 this._emitConfigChanged();
-              }}
-              @closed=${this._stopPropagation}
-            >
-              <mwc-list-item value="pill">Pill background</mwc-list-item>
-              <mwc-list-item value="pill-strong">Pill strong</mwc-list-item>
-              <mwc-list-item value="chip">Chip / rectangle</mwc-list-item>
-              <mwc-list-item value="underline">Underline</mwc-list-item>
-              <mwc-list-item value="none">No background</mwc-list-item>
-            </ha-select>
+              }
+            )}
           </div>
           <div class="row-inline">
             <div class="color-group">
@@ -1718,20 +1751,20 @@ if (!customElements.get(EDITOR_TAG)) {
                   this._emitConfigChanged();
                 }}
               ></ha-textfield>
-              <ha-select
-                label="Label position"
-                .value=${row.label_position || "none"}
-                @selected=${(e) => this._onLabelPosChanged(rowIdx, e)}
-                @closed=${this._stopPropagation}
-              >
-                <mwc-list-item value="none">None</mwc-list-item>
-                <mwc-list-item value="top-left">Top left</mwc-list-item>
-                <mwc-list-item value="top-center">Top center</mwc-list-item>
-                <mwc-list-item value="top-right">Top right</mwc-list-item>
-                <mwc-list-item value="bottom-left">Bottom left</mwc-list-item>
-                <mwc-list-item value="bottom-center">Bottom center</mwc-list-item>
-                <mwc-list-item value="bottom-right">Bottom right</mwc-list-item>
-              </ha-select>
+              ${this._renderSelect(
+                "Label position",
+                row.label_position || "none",
+                [
+                  ["none", "None"],
+                  ["top-left", "Top left"],
+                  ["top-center", "Top center"],
+                  ["top-right", "Top right"],
+                  ["bottom-left", "Bottom left"],
+                  ["bottom-center", "Bottom center"],
+                  ["bottom-right", "Bottom right"],
+                ],
+                (value) => this._onLabelPosChanged(rowIdx, value)
+              )}
             </div>
             <div class="row-buttons">
               <div class="button-group-label">Row</div>
@@ -1816,8 +1849,10 @@ if (!customElements.get(EDITOR_TAG)) {
     }
 
     _onLabelPosChanged(rowIdx, e) {
-      const select = e.target;
-      const value = select && select.value ? select.value : "none";
+      const value =
+        typeof e === "string"
+          ? e
+          : this._selectValue(e, "none") || "none";
       this._config.rows[rowIdx].label_position = value;
       this._emitConfigChanged();
     }
@@ -1895,19 +1930,19 @@ if (!customElements.get(EDITOR_TAG)) {
                 </div>
 
                 <div class="row-inline">
-                  <ha-select
-                    label="Icon mode"
-                    .value=${ent.icon_mode || "single"}
-                    @selected=${(e) => {
-                      const v = e.target.value || "single";
-                      this._config.rows[rowIdx].entities[entIdx].icon_mode = v;
+                  ${this._renderSelect(
+                    "Icon mode",
+                    ent.icon_mode || "single",
+                    [
+                      ["single", "Single icon"],
+                      ["state", "By state"],
+                    ],
+                    (v) => {
+                      this._config.rows[rowIdx].entities[entIdx].icon_mode =
+                        v || "single";
                       this._emitConfigChanged();
-                    }}
-                    @closed=${this._stopPropagation}
-                  >
-                    <mwc-list-item value="single">Single icon</mwc-list-item>
-                    <mwc-list-item value="state">By state</mwc-list-item>
-                  </ha-select>
+                    }
+                  )}
 
                   ${ (ent.icon_mode || "single") === "single" ? html`
                     <ha-icon-picker
@@ -2018,19 +2053,19 @@ if (!customElements.get(EDITOR_TAG)) {
                 </div>
 
                 <div class="row-inline">
-                  <ha-select
-                    label="Color source"
-                    .value=${colorMode}
-                    @selected=${(e) => {
-                      const v = e.target.value || "interval";
-                      this._config.rows[rowIdx].entities[entIdx].color_mode = v;
+                  ${this._renderSelect(
+                    "Color source",
+                    colorMode,
+                    [
+                      ["interval", "Color interval"],
+                      ["custom", "Custom colors"],
+                    ],
+                    (v) => {
+                      this._config.rows[rowIdx].entities[entIdx].color_mode =
+                        v || "interval";
                       this._emitConfigChanged();
-                    }}
-                    @closed=${this._stopPropagation}
-                  >
-                    <mwc-list-item value="interval">Color interval</mwc-list-item>
-                    <mwc-list-item value="custom">Custom colors</mwc-list-item>
-                  </ha-select>
+                    }
+                  )}
                 </div>
 
                 ${colorMode === "custom"
@@ -2143,45 +2178,43 @@ if (!customElements.get(EDITOR_TAG)) {
           </div>
 
           <div class="row-inline">
-            <ha-select
-              label="Badge type"
-              .value=${type}
-              @selected=${(e) => {
-                badges[bIdx].badge_type = e.target.value || "value";
+            ${this._renderSelect(
+              "Badge type",
+              type,
+              [
+                ["value", "Value badge"],
+                ["dimmer", "Dimmer (for lights)"],
+                ["stats", "Stats (history)"],
+                ["media", "Media control"],
+                ["media_info", "Media info"],
+                ["alarm", "Alarm control"],
+              ],
+              (v) => {
+                badges[bIdx].badge_type = v || "value";
                 this._emitConfigChanged();
-              }}
-              @closed=${this._stopPropagation}
-            >
-              <mwc-list-item value="value">Value badge</mwc-list-item>
-              <mwc-list-item value="dimmer">Dimmer (for lights)</mwc-list-item>
-              <mwc-list-item value="stats">Stats (history)</mwc-list-item>
-              <mwc-list-item value="media">Media control</mwc-list-item>
-              <mwc-list-item value="media_info">Media info</mwc-list-item>
-              <mwc-list-item value="alarm">Alarm control</mwc-list-item>
-            </ha-select>
+              }
+            )}
           </div>
 
           ${type === "stats"
             ? html`
                 <div class="row-inline">
-                  <ha-select
-                    label="Stats mode"
-                    .value=${b.stats_mode || "max"}
-                    @selected=${(e) => {
-                      badges[bIdx].stats_mode = e.target.value || "max";
+                  ${this._renderSelect(
+                    "Stats mode",
+                    b.stats_mode || "max",
+                    [
+                      ["min", "Min"],
+                      ["max", "Max"],
+                      ["avg", "Average"],
+                      ["last_on", "Last on"],
+                      ["last_off", "Last off"],
+                      ["last_changed", "Last changed"],
+                    ],
+                    (v) => {
+                      badges[bIdx].stats_mode = v || "max";
                       this._emitConfigChanged();
-                    }}
-                    @closed=${this._stopPropagation}
-                  >
-                    <mwc-list-item value="min">Min</mwc-list-item>
-                    <mwc-list-item value="max">Max</mwc-list-item>
-                    <mwc-list-item value="avg">Average</mwc-list-item>
-                    <mwc-list-item value="last_on">Last on</mwc-list-item>
-                    <mwc-list-item value="last_off">Last off</mwc-list-item>
-                    <mwc-list-item value="last_changed"
-                      >Last changed</mwc-list-item
-                    >
-                  </ha-select>
+                    }
+                  )}
                   <ha-textfield
                     type="number"
                     label="History window (hours)"
@@ -2201,27 +2234,25 @@ if (!customElements.get(EDITOR_TAG)) {
           ${type === "media"
             ? html`
                 <div class="row-inline">
-                  <ha-select
-                    label="Media action"
-                    .value=${b.media_action || "play_pause"}
-                    @selected=${(e) => {
-                      badges[bIdx].media_action = e.target.value || "play_pause";
+                  ${this._renderSelect(
+                    "Media action",
+                    b.media_action || "play_pause",
+                    [
+                      ["play_pause", "Play/Pause"],
+                      ["play", "Play"],
+                      ["pause", "Pause"],
+                      ["stop", "Stop"],
+                      ["next", "Next track"],
+                      ["previous", "Previous track"],
+                      ["volume_up", "Volume up"],
+                      ["volume_down", "Volume down"],
+                      ["mute_toggle", "Mute toggle"],
+                    ],
+                    (v) => {
+                      badges[bIdx].media_action = v || "play_pause";
                       this._emitConfigChanged();
-                    }}
-                    @closed=${this._stopPropagation}
-                  >
-                    <mwc-list-item value="play_pause">Play/Pause</mwc-list-item>
-                    <mwc-list-item value="play">Play</mwc-list-item>
-                    <mwc-list-item value="pause">Pause</mwc-list-item>
-                    <mwc-list-item value="stop">Stop</mwc-list-item>
-                    <mwc-list-item value="next">Next track</mwc-list-item>
-                    <mwc-list-item value="previous"
-                      >Previous track</mwc-list-item
-                    >
-                    <mwc-list-item value="volume_up">Volume up</mwc-list-item>
-                    <mwc-list-item value="volume_down">Volume down</mwc-list-item>
-                    <mwc-list-item value="mute_toggle">Mute toggle</mwc-list-item>
-                  </ha-select>
+                    }
+                  )}
                 </div>
               `
             : ""}
@@ -2229,24 +2260,21 @@ if (!customElements.get(EDITOR_TAG)) {
           ${type === "media_info"
             ? html`
                 <div class="row-inline">
-                  <ha-select
-                    label="Media info mode"
-                    .value=${b.media_info_mode || "title_artist"}
-                    @selected=${(e) => {
-                      badges[bIdx].media_info_mode =
-                        e.target.value || "title_artist";
+                  ${this._renderSelect(
+                    "Media info mode",
+                    b.media_info_mode || "title_artist",
+                    [
+                      ["title", "Title"],
+                      ["artist", "Artist"],
+                      ["album", "Album"],
+                      ["source", "Source"],
+                      ["title_artist", "Title + artist"],
+                    ],
+                    (v) => {
+                      badges[bIdx].media_info_mode = v || "title_artist";
                       this._emitConfigChanged();
-                    }}
-                    @closed=${this._stopPropagation}
-                  >
-                    <mwc-list-item value="title">Title</mwc-list-item>
-                    <mwc-list-item value="artist">Artist</mwc-list-item>
-                    <mwc-list-item value="album">Album</mwc-list-item>
-                    <mwc-list-item value="source">Source</mwc-list-item>
-                    <mwc-list-item value="title_artist"
-                      >Title + artist</mwc-list-item
-                    >
-                  </ha-select>
+                    }
+                  )}
                 </div>
               `
             : ""}
@@ -2254,20 +2282,20 @@ if (!customElements.get(EDITOR_TAG)) {
           ${type === "alarm"
             ? html`
                 <div class="row-inline">
-                  <ha-select
-                    label="Alarm action"
-                    .value=${b.alarm_action || "arm_home"}
-                    @selected=${(e) => {
-                      badges[bIdx].alarm_action = e.target.value || "arm_home";
+                  ${this._renderSelect(
+                    "Alarm action",
+                    b.alarm_action || "arm_home",
+                    [
+                      ["arm_home", "Arm home"],
+                      ["arm_away", "Arm away"],
+                      ["arm_night", "Arm night"],
+                      ["disarm", "Disarm"],
+                    ],
+                    (v) => {
+                      badges[bIdx].alarm_action = v || "arm_home";
                       this._emitConfigChanged();
-                    }}
-                    @closed=${this._stopPropagation}
-                  >
-                    <mwc-list-item value="arm_home">Arm home</mwc-list-item>
-                    <mwc-list-item value="arm_away">Arm away</mwc-list-item>
-                    <mwc-list-item value="arm_night">Arm night</mwc-list-item>
-                    <mwc-list-item value="disarm">Disarm</mwc-list-item>
-                  </ha-select>
+                    }
+                  )}
                   <ha-textfield
                     label="Alarm code (optional)"
                     .value=${b.alarm_code || ""}
@@ -2361,7 +2389,7 @@ if (!customElements.get(EDITOR_TAG)) {
           margin-bottom: 6px;
         }
         ha-textfield,
-        ha-select,
+        ha-selector,
         ha-entity-picker,
         ha-icon-picker {
           min-width: 180px;
