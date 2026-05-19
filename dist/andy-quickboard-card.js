@@ -1136,16 +1136,12 @@ if (!customElements.get(EDITOR_TAG)) {
       return {
         hass: {},
         _config: {},
-        _rowsCollapsed: {},
-        _entitiesCollapsed: {},
       };
     }
 
     constructor() {
       super();
       this._config = {};
-      this._rowsCollapsed = {};
-      this._entitiesCollapsed = {};
     }
 
     setConfig(config) {
@@ -1356,32 +1352,6 @@ if (!customElements.get(EDITOR_TAG)) {
       });
     }
 
-    _setAllRowsCollapsed(collapsed) {
-      const rows = this._config.rows || [];
-      const map = {};
-      rows.forEach((_, idx) => {
-        map[idx] = collapsed;
-      });
-      this._rowsCollapsed = map;
-      this.requestUpdate();
-    }
-
-    _toggleRow(idx) {
-      const current = this._rowsCollapsed[idx] || false;
-      this._rowsCollapsed = { ...this._rowsCollapsed, [idx]: !current };
-      this.requestUpdate();
-    }
-
-    _toggleEntity(rowIdx, entIdx) {
-      const key = `${rowIdx}-${entIdx}`;
-      const current = this._entitiesCollapsed[key] || false;
-      this._entitiesCollapsed = {
-        ...this._entitiesCollapsed,
-        [key]: !current,
-      };
-      this.requestUpdate();
-    }
-
     render() {
       if (!this._config) return html``;
 
@@ -1390,346 +1360,199 @@ if (!customElements.get(EDITOR_TAG)) {
       const rows = this._config.rows || [];
 
       return html`
-        <style>
-          ${this._css()}
-        </style>
+        <style>${this._css()}</style>
 
         <div class="section">
-          <div class="section-header">Basic</div>
-          <ha-textfield
-            label="Title"
+          <div class="section-title">Basic</div>
+          <ha-selector
+            .hass=${this.hass}
+            .label=${"Title"}
             .value=${this._config.title || ""}
-            @input=${(e) => {
-              this._config = { ...this._config, title: e.target.value };
+            .selector=${{text: {}}}
+            @value-changed=${(e) => {
+              this._config = { ...this._config, title: e.detail.value };
               this._emitConfigChanged();
             }}
-          ></ha-textfield>
+          ></ha-selector>
         </div>
 
         <div class="section">
-          <div class="section-header">Box style</div>
-          <div class="row-inline">
-            <ha-textfield
-              type="number"
-              label="Border radius (px)"
+          <div class="section-title">Appearance</div>
+          <div class="three-col">
+            <ha-selector
+              .hass=${this.hass}
+              .label=${"Border radius (px)"}
               .value=${boxStyle.border_radius ?? 18}
-              min="0"
-              step="1"
-              @input=${(e) => {
+              .selector=${{number: {min: 0, step: 1, mode: "box"}}}
+              @value-changed=${(e) => {
                 this._ensureBoxStyle();
-                const v = Number(e.target.value);
-                this._config.box_style.border_radius = isNaN(v) ? 18 : v;
+                this._config.box_style.border_radius = Number(e.detail.value);
                 this._emitConfigChanged();
               }}
-            ></ha-textfield>
-
-            <ha-textfield
-              type="number"
-              label="Vertical padding (px)"
+            ></ha-selector>
+            <ha-selector
+              .hass=${this.hass}
+              .label=${"Vertical padding (px)"}
               .value=${boxStyle.padding_vertical ?? 12}
-              min="0"
-              step="1"
-              @input=${(e) => {
+              .selector=${{number: {min: 0, step: 1, mode: "box"}}}
+              @value-changed=${(e) => {
                 this._ensureBoxStyle();
-                const v = Number(e.target.value);
-                this._config.box_style.padding_vertical = isNaN(v) ? 12 : v;
+                this._config.box_style.padding_vertical = Number(e.detail.value);
                 this._emitConfigChanged();
               }}
-            ></ha-textfield>
-
-            <ha-textfield
-              type="number"
-              label="Horizontal padding (px)"
+            ></ha-selector>
+            <ha-selector
+              .hass=${this.hass}
+              .label=${"Horizontal padding (px)"}
               .value=${boxStyle.padding_horizontal ?? 16}
-              min="0"
-              step="1"
-              @input=${(e) => {
+              .selector=${{number: {min: 0, step: 1, mode: "box"}}}
+              @value-changed=${(e) => {
                 this._ensureBoxStyle();
-                const v = Number(e.target.value);
-                this._config.box_style.padding_horizontal = isNaN(v) ? 16 : v;
+                this._config.box_style.padding_horizontal = Number(e.detail.value);
                 this._emitConfigChanged();
               }}
-            ></ha-textfield>
+            ></ha-selector>
           </div>
-
-          <div class="row-inline">
-            ${this._renderSelect(
-              "Box shadow",
-              this._shadowPresetFromCss(boxStyle.box_shadow),
-              [
-                ["none", "None"],
-                ["soft", "Soft"],
-                ["medium", "Medium"],
-                ["strong", "Strong"],
-              ],
-              (preset) => {
-                this._ensureBoxStyle();
-                this._config.box_style.box_shadow =
-                  this._shadowCssFromPreset(preset || "medium");
-                this._emitConfigChanged();
-              }
-            )}
-          </div>
-        </div>
-
-        <div class="section">
-          <div class="section-header">Badges</div>
-          <div class="row-inline">
-            ${this._renderSelect(
-              "Badge background style",
-              this._config.badge_style || "pill",
-              [
-                ["pill", "Pill background"],
-                ["pill-strong", "Pill strong"],
-                ["chip", "Chip / rectangle"],
-                ["underline", "Underline"],
-                ["none", "No background"],
-              ],
-              (v) => {
-                this._config.badge_style = v || "pill";
-                this._emitConfigChanged();
-              }
-            )}
-          </div>
-          <div class="row-inline">
-            <div class="color-group">
-              <input
-                type="color"
-                class="color-input"
-                .value=${this._config.dimmer_slider_color || "#FFFFFF"}
-                @input=${(e) =>
-                  this._updateGlobalColorField(
-                    "dimmer_slider_color",
-                    e.target.value
-                  )}
-                @click=${this._stopPropagation}
-              />
-              <ha-textfield
-                label="Dimmer slider color"
-                .value=${this._config.dimmer_slider_color || ""}
-                @input=${(e) =>
-                  this._updateGlobalColorField(
-                    "dimmer_slider_color",
-                    e.target.value
-                  )}
-              ></ha-textfield>
-            </div>
-          </div>
-        </div>
-
-        <div class="section">
-          <div class="section-header">Color intervals</div>
-          ${intervals.map(
-            (interval, idx) => html`
-              <div class="interval-block">
-                <div class="interval-line">
-                  <ha-textfield
-                    type="number"
-                    label="From"
-                    .value=${interval.from ?? ""}
-                    @input=${(e) =>
-                      this._updateIntervalField(
-                        idx,
-                        "from",
-                        Number(e.target.value)
-                      )}
-                  ></ha-textfield>
-                  <ha-textfield
-                    type="number"
-                    label="To"
-                    .value=${interval.to ?? ""}
-                    @input=${(e) =>
-                      this._updateIntervalField(idx, "to", Number(e.target.value))}
-                  ></ha-textfield>
-                </div>
-
-                <div class="interval-line">
-                  <div class="color-group">
-                    <input
-                      type="color"
-                      class="color-input"
-                      .value=${interval.color_from || "#000000"}
-                      @input=${(e) =>
-                        this._updateIntervalField(
-                          idx,
-                          "color_from",
-                          e.target.value
-                        )}
-                      @click=${this._stopPropagation}
-                    />
-                    <ha-textfield
-                      label="Gradient from"
-                      .value=${interval.color_from || ""}
-                      @input=${(e) =>
-                        this._updateIntervalField(
-                          idx,
-                          "color_from",
-                          e.target.value
-                        )}
-                    ></ha-textfield>
-                  </div>
-
-                  <div class="color-group">
-                    <input
-                      type="color"
-                      class="color-input"
-                      .value=${interval.color_to || "#000000"}
-                      @input=${(e) =>
-                        this._updateIntervalField(
-                          idx,
-                          "color_to",
-                          e.target.value
-                        )}
-                      @click=${this._stopPropagation}
-                    />
-                    <ha-textfield
-                      label="Gradient to"
-                      .value=${interval.color_to || ""}
-                      @input=${(e) =>
-                        this._updateIntervalField(
-                          idx,
-                          "color_to",
-                          e.target.value
-                        )}
-                    ></ha-textfield>
-                  </div>
-
-                  <div class="color-group">
-                    <input
-                      type="color"
-                      class="color-input"
-                      .value=${interval.text_color || "#FFFFFF"}
-                      @input=${(e) =>
-                        this._updateIntervalField(
-                          idx,
-                          "text_color",
-                          e.target.value
-                        )}
-                      @click=${this._stopPropagation}
-                    />
-                    <ha-textfield
-                      label="Text color"
-                      .value=${interval.text_color || ""}
-                      @input=${(e) =>
-                        this._updateIntervalField(
-                          idx,
-                          "text_color",
-                          e.target.value
-                        )}
-                    ></ha-textfield>
-                  </div>
-                </div>
-
-                <div class="row-inline">
-                  <ha-textfield
-                    label="Match state (optional, e.g. on/off)"
-                    .value=${interval.match_state || ""}
-                    @input=${(e) =>
-                      this._updateIntervalField(
-                        idx,
-                        "match_state",
-                        e.target.value
-                      )}
-                  ></ha-textfield>
-                </div>
-                <div class="row-inline">
-                  <ha-textfield
-                    label="Matched state label (optional)"
-                    .value=${interval.state_text || ""}
-                    @input=${(e) =>
-                      this._updateIntervalField(
-                        idx,
-                        "state_text",
-                        e.target.value
-                      )}
-                  ></ha-textfield>
-                  <ha-textfield
-                    label="Suffix text (optional, supports variables)"
-                    .value=${interval.suffix_text || ""}
-                    @input=${(e) =>
-                      this._updateIntervalField(
-                        idx,
-                        "suffix_text",
-                        e.target.value
-                      )}
-                  ></ha-textfield>
-                </div>
-                <div class="help-text">
-                  Variables: &lt;state&gt;, &lt;unit&gt;, &lt;dimmer_pct&gt;,
-                  &lt;source&gt;, &lt;title&gt;, &lt;artist&gt;, &lt;album&gt;,
-                  &lt;title_artist&gt;
-                </div>
-
-                <mwc-button
-                  raised
-                  dense
-                  class="danger"
-                  @click=${(() => {
-                    this._config.color_intervals.splice(idx, 1);
-                    this.requestUpdate();
-                    this._emitConfigChanged();
-                  })}
-                  >Delete</mwc-button
-                >
-              </div>
-            `
+          ${this._renderSelect("Box shadow", this._shadowPresetFromCss(boxStyle.box_shadow),
+            [["none","None"],["soft","Soft"],["medium","Medium"],["strong","Strong"]],
+            (preset) => {
+              this._ensureBoxStyle();
+              this._config.box_style.box_shadow = this._shadowCssFromPreset(preset || "medium");
+              this._emitConfigChanged();
+            }
           )}
+          ${this._renderSelect("Badge style", this._config.badge_style || "pill",
+            [["pill","Pill"],["pill-strong","Pill strong"],["chip","Chip"],["underline","Underline"],["none","None"]],
+            (v) => { this._config.badge_style = v || "pill"; this._emitConfigChanged(); }
+          )}
+          <div class="color-row">
+            <input type="color" class="color-swatch"
+              .value=${this._config.dimmer_slider_color || "#FFFFFF"}
+              @input=${(e) => this._updateGlobalColorField("dimmer_slider_color", e.target.value)}
+              @click=${this._stopPropagation}
+            />
+            <ha-selector
+              .hass=${this.hass}
+              .label=${"Dimmer slider color"}
+              .value=${this._config.dimmer_slider_color || ""}
+              .selector=${{text: {}}}
+              @value-changed=${(e) => this._updateGlobalColorField("dimmer_slider_color", e.detail.value)}
+            ></ha-selector>
+          </div>
+        </div>
 
-          <mwc-button
-            raised
-            dense
-            @click=${(() => {
+        <div class="section">
+          <div class="section-title">Color intervals</div>
+          ${intervals.map((interval, idx) => html`
+            <ha-expansion-panel
+              .header=${interval.match_state
+                ? `Interval ${idx + 1} — state: ${interval.match_state}`
+                : `Interval ${idx + 1} — ${interval.from ?? 0} to ${interval.to ?? 0}`}
+            >
+              <div class="expansion-content">
+                <div class="two-col">
+                  <ha-selector
+                    .hass=${this.hass} .label=${"From"}
+                    .value=${interval.from ?? 0}
+                    .selector=${{number: {step: 1, mode: "box"}}}
+                    @value-changed=${(e) => this._updateIntervalField(idx, "from", Number(e.detail.value))}
+                  ></ha-selector>
+                  <ha-selector
+                    .hass=${this.hass} .label=${"To"}
+                    .value=${interval.to ?? 0}
+                    .selector=${{number: {step: 1, mode: "box"}}}
+                    @value-changed=${(e) => this._updateIntervalField(idx, "to", Number(e.detail.value))}
+                  ></ha-selector>
+                </div>
+                <div class="three-col">
+                  <div class="color-row">
+                    <input type="color" class="color-swatch"
+                      .value=${interval.color_from || "#000000"}
+                      @input=${(e) => this._updateIntervalField(idx, "color_from", e.target.value)}
+                      @click=${this._stopPropagation}
+                    />
+                    <ha-selector .hass=${this.hass} .label=${"Gradient from"}
+                      .value=${interval.color_from || ""}
+                      .selector=${{text: {}}}
+                      @value-changed=${(e) => this._updateIntervalField(idx, "color_from", e.detail.value)}
+                    ></ha-selector>
+                  </div>
+                  <div class="color-row">
+                    <input type="color" class="color-swatch"
+                      .value=${interval.color_to || "#000000"}
+                      @input=${(e) => this._updateIntervalField(idx, "color_to", e.target.value)}
+                      @click=${this._stopPropagation}
+                    />
+                    <ha-selector .hass=${this.hass} .label=${"Gradient to"}
+                      .value=${interval.color_to || ""}
+                      .selector=${{text: {}}}
+                      @value-changed=${(e) => this._updateIntervalField(idx, "color_to", e.detail.value)}
+                    ></ha-selector>
+                  </div>
+                  <div class="color-row">
+                    <input type="color" class="color-swatch"
+                      .value=${interval.text_color || "#FFFFFF"}
+                      @input=${(e) => this._updateIntervalField(idx, "text_color", e.target.value)}
+                      @click=${this._stopPropagation}
+                    />
+                    <ha-selector .hass=${this.hass} .label=${"Text color"}
+                      .value=${interval.text_color || ""}
+                      .selector=${{text: {}}}
+                      @value-changed=${(e) => this._updateIntervalField(idx, "text_color", e.detail.value)}
+                    ></ha-selector>
+                  </div>
+                </div>
+                <ha-selector .hass=${this.hass} .label=${"Match state (optional, e.g. on, off)"}
+                  .value=${interval.match_state || ""}
+                  .selector=${{text: {}}}
+                  @value-changed=${(e) => this._updateIntervalField(idx, "match_state", e.detail.value)}
+                ></ha-selector>
+                <div class="two-col">
+                  <ha-selector .hass=${this.hass} .label=${"State label (optional)"}
+                    .value=${interval.state_text || ""}
+                    .selector=${{text: {}}}
+                    @value-changed=${(e) => this._updateIntervalField(idx, "state_text", e.detail.value)}
+                  ></ha-selector>
+                  <ha-selector .hass=${this.hass} .label=${"Suffix text (supports variables)"}
+                    .value=${interval.suffix_text || ""}
+                    .selector=${{text: {}}}
+                    @value-changed=${(e) => this._updateIntervalField(idx, "suffix_text", e.detail.value)}
+                  ></ha-selector>
+                </div>
+                <div class="helper-text">Variables: &lt;state&gt; &lt;unit&gt; &lt;dimmer_pct&gt; &lt;source&gt; &lt;title&gt; &lt;artist&gt; &lt;album&gt; &lt;title_artist&gt;</div>
+                <div class="action-row">
+                  <ha-button class="danger" @click=${() => {
+                    this._config.color_intervals.splice(idx, 1);
+                    this.requestUpdate(); this._emitConfigChanged();
+                  }}>Delete interval</ha-button>
+                </div>
+              </div>
+            </ha-expansion-panel>
+          `)}
+          <div class="action-row">
+            <ha-button @click=${() => {
               if (!this._config.color_intervals) this._config.color_intervals = [];
               this._config.color_intervals.push({
-                from: 0,
-                to: 10,
-                color_from: "#1E88E5",
-                color_to: "#1E88E5",
+                from: 0, to: 10,
+                color_from: "#1E88E5", color_to: "#1E88E5",
                 text_color: "#FFFFFF",
-                match_state: "",
-                state_text: "",
-                suffix_text: "",
+                match_state: "", state_text: "", suffix_text: "",
               });
-              this.requestUpdate();
-              this._emitConfigChanged();
-            })}
-            >Add interval</mwc-button
-          >
+              this.requestUpdate(); this._emitConfigChanged();
+            }}>Add interval</ha-button>
+          </div>
         </div>
 
         <div class="section">
-          <div class="section-header-bar">
-            <div class="section-header">Rows & entities</div>
-            <div class="section-header-actions">
-              <mwc-button
-                dense
-                @click=${() => this._setAllRowsCollapsed(false)}
-                >Expand all</mwc-button
-              >
-              <mwc-button
-                dense
-                @click=${() => this._setAllRowsCollapsed(true)}
-                >Collapse all</mwc-button
-              >
-            </div>
-          </div>
-
+          <div class="section-title">Rows &amp; entities</div>
           ${rows.map((row, rowIdx) => this._renderRow(row, rowIdx))}
-          <mwc-button
-            raised
-            dense
-            @click=${(() => {
+          <div class="action-row">
+            <ha-button @click=${() => {
               if (!this._config.rows) this._config.rows = [];
-              this._config.rows.push({
-                label: "",
-                label_position: "none",
-                entities: [],
-              });
-              this.requestUpdate();
-              this._emitConfigChanged();
-            })}
-            >Add row</mwc-button
-          >
+              this._config.rows.push({ label: "", label_position: "none", entities: [] });
+              this.requestUpdate(); this._emitConfigChanged();
+            }}>Add row</ha-button>
+          </div>
         </div>
       `;
     }
@@ -1737,122 +1560,59 @@ if (!customElements.get(EDITOR_TAG)) {
     _renderRow(row, rowIdx) {
       const rows = this._config.rows || [];
       const entities = row.entities || [];
-      const collapsed = this._rowsCollapsed[rowIdx] || false;
+      const header = row.label ? `Row ${rowIdx + 1} — ${row.label}` : `Row ${rowIdx + 1}`;
 
       return html`
-        <div class="row-block">
-          <div class="row-header">
-            <div class="row-label-config">
-              <ha-textfield
-                label="Row label"
+        <ha-expansion-panel .header=${header}>
+          <div class="expansion-content">
+            <div class="two-col">
+              <ha-selector .hass=${this.hass} .label=${"Row label"}
                 .value=${row.label || ""}
-                @input=${(e) => {
-                  this._config.rows[rowIdx].label = e.target.value;
+                .selector=${{text: {}}}
+                @value-changed=${(e) => {
+                  this._config.rows[rowIdx].label = e.detail.value;
                   this._emitConfigChanged();
                 }}
-              ></ha-textfield>
-              ${this._renderSelect(
-                "Label position",
-                row.label_position || "none",
-                [
-                  ["none", "None"],
-                  ["top-left", "Top left"],
-                  ["top-center", "Top center"],
-                  ["top-right", "Top right"],
-                  ["bottom-left", "Bottom left"],
-                  ["bottom-center", "Bottom center"],
-                  ["bottom-right", "Bottom right"],
-                ],
+              ></ha-selector>
+              ${this._renderSelect("Label position", row.label_position || "none",
+                [["none","None"],["top-left","Top left"],["top-center","Top center"],["top-right","Top right"],
+                 ["bottom-left","Bottom left"],["bottom-center","Bottom center"],["bottom-right","Bottom right"]],
                 (value) => this._onLabelPosChanged(rowIdx, value)
               )}
             </div>
-            <div class="row-buttons">
-              <div class="button-group-label">Row</div>
-              <mwc-button
-                raised
-                dense
-                @click=${() => this._toggleRow(rowIdx)}
-                >${collapsed ? "Expand" : "Collapse"}</mwc-button
-              >
-              <mwc-button
-                raised
-                dense
-                @click=${(() => {
-                  if (rowIdx <= 0) return;
-                  [rows[rowIdx - 1], rows[rowIdx]] = [rows[rowIdx], rows[rowIdx - 1]];
-                  this.requestUpdate();
-                  this._emitConfigChanged();
-                })}
-                >Up</mwc-button
-              >
-              <mwc-button
-                raised
-                dense
-                @click=${(() => {
-                  if (rowIdx >= rows.length - 1) return;
-                  [rows[rowIdx + 1], rows[rowIdx]] = [rows[rowIdx], rows[rowIdx + 1]];
-                  this.requestUpdate();
-                  this._emitConfigChanged();
-                })}
-                >Down</mwc-button
-              >
-              <mwc-button
-                raised
-                dense
-                class="danger"
-                @click=${(() => {
-                  rows.splice(rowIdx, 1);
-                  this.requestUpdate();
-                  this._emitConfigChanged();
-                })}
-                >Delete</mwc-button
-              >
+
+            ${entities.map((ent, entIdx) => this._renderEntity(rowIdx, ent, entIdx))}
+
+            <div class="action-row">
+              <ha-button @click=${() => {
+                if (!this._config.rows[rowIdx].entities) this._config.rows[rowIdx].entities = [];
+                this._config.rows[rowIdx].entities.push({
+                  entity: "", icon: "", icon_mode: "single", icon_states: [],
+                  name: "", value_font_size: 1.0, label_font_size: 1.0,
+                  color_mode: "interval", color_from: "", color_to: "", badges: [],
+                });
+                this.requestUpdate(); this._emitConfigChanged();
+              }}>Add entity</ha-button>
+              ${rowIdx > 0 ? html`<ha-button @click=${() => {
+                [rows[rowIdx - 1], rows[rowIdx]] = [rows[rowIdx], rows[rowIdx - 1]];
+                this.requestUpdate(); this._emitConfigChanged();
+              }}>Move up</ha-button>` : ""}
+              ${rowIdx < rows.length - 1 ? html`<ha-button @click=${() => {
+                [rows[rowIdx + 1], rows[rowIdx]] = [rows[rowIdx], rows[rowIdx + 1]];
+                this.requestUpdate(); this._emitConfigChanged();
+              }}>Move down</ha-button>` : ""}
+              <ha-button class="danger" @click=${() => {
+                rows.splice(rowIdx, 1);
+                this.requestUpdate(); this._emitConfigChanged();
+              }}>Delete row</ha-button>
             </div>
           </div>
-
-          ${collapsed
-            ? ""
-            : html`
-                <div class="entities-block">
-                  ${entities.map((ent, entIdx) =>
-                    this._renderEntity(rowIdx, ent, entIdx)
-                  )}
-                  <mwc-button
-                    raised
-                    dense
-                    @click=${(() => {
-                      if (!this._config.rows[rowIdx].entities)
-                        this._config.rows[rowIdx].entities = [];
-                      this._config.rows[rowIdx].entities.push({
-                        entity: "",
-                        icon: "",
-                        icon_mode: "single",
-                        icon_states: [],
-                        name: "",
-                        value_font_size: 1.0,
-                        label_font_size: 1.0,
-                        color_mode: "interval",
-                        color_from: "",
-                        color_to: "",
-                        badges: [],
-                      });
-
-                      this.requestUpdate();
-                      this._emitConfigChanged();
-                    })}
-                    >Add entity</mwc-button
-                  >
-                </div>
-              `}
-        </div>
+        </ha-expansion-panel>
       `;
     }
 
     _onLabelPosChanged(rowIdx, e) {
-      const value =
-        typeof e === "string"
-          ? e
-          : this._selectValue(e, "none") || "none";
+      const value = typeof e === "string" ? e : this._selectValue(e, "none") || "none";
       this._config.rows[rowIdx].label_position = value;
       this._emitConfigChanged();
     }
@@ -1861,304 +1621,168 @@ if (!customElements.get(EDITOR_TAG)) {
       const entities = this._config.rows[rowIdx].entities;
       const badges = ent.badges || [];
       const colorMode = ent.color_mode || "interval";
-      const key = `${rowIdx}-${entIdx}`;
-      const collapsed = this._entitiesCollapsed[key] || false;
+      const header = ent.name || ent.entity || `Entity ${entIdx + 1}`;
 
       return html`
-        <div class="entity-block">
-          <div class="entity-header">
-            <div class="entity-title">Entity ${entIdx + 1}</div>
-            <div class="row-buttons">
-              <div class="button-group-label">${ent.name || "Entity"}</div>
-              <mwc-button
-                raised
-                dense
-                @click=${() => this._toggleEntity(rowIdx, entIdx)}
-                >${collapsed ? "Expand" : "Collapse"}</mwc-button
-              >
-              <mwc-button
-                raised
-                dense
-                @click=${(() => {
-                  if (entIdx <= 0) return;
-                  [entities[entIdx - 1], entities[entIdx]] = [
-                    entities[entIdx],
-                    entities[entIdx - 1],
-                  ];
-                  this.requestUpdate();
+        <ha-expansion-panel .header=${header}>
+          <div class="expansion-content">
+            <div class="picker-label">Entity</div>
+            <div class="entity-picker-placeholder" id=${`entity-picker-${rowIdx}-${entIdx}`}></div>
+
+            <ha-selector .hass=${this.hass} .label=${"Name"}
+              .value=${ent.name || ""}
+              .selector=${{text: {}}}
+              @value-changed=${(e) => {
+                this._config.rows[rowIdx].entities[entIdx].name = e.detail.value;
+                this._emitConfigChanged();
+              }}
+            ></ha-selector>
+
+            <div class="two-col">
+              ${this._renderSelect("Icon mode", ent.icon_mode || "single",
+                [["single","Single icon"],["state","By state"]],
+                (v) => {
+                  this._config.rows[rowIdx].entities[entIdx].icon_mode = v || "single";
                   this._emitConfigChanged();
-                })}
-                >Up</mwc-button
-              >
-              <mwc-button
-                raised
-                dense
-                @click=${(() => {
-                  if (entIdx >= entities.length - 1) return;
-                  [entities[entIdx + 1], entities[entIdx]] = [
-                    entities[entIdx],
-                    entities[entIdx + 1],
-                  ];
-                  this.requestUpdate();
-                  this._emitConfigChanged();
-                })}
-                >Down</mwc-button
-              >
-              <mwc-button
-                raised
-                dense
-                class="danger"
-                @click=${(() => {
-                  entities.splice(entIdx, 1);
-                  this.requestUpdate();
-                  this._emitConfigChanged();
-                })}
-                >Delete</mwc-button
-              >
+                }
+              )}
+              ${(ent.icon_mode || "single") === "single" ? html`
+                <ha-icon-picker label="Icon" .hass=${this.hass} .value=${ent.icon || ""}
+                  @value-changed=${(e) => {
+                    this._config.rows[rowIdx].entities[entIdx].icon = e.detail.value;
+                    this._emitConfigChanged();
+                  }}
+                  @closed=${this._stopPropagation}
+                ></ha-icon-picker>
+              ` : ""}
             </div>
-          </div>
 
-          ${collapsed
-            ? ""
-            : html`
-                <div class="row-inline">
-                  <span class="field-label">${ent.name || "Entity"}</span>
-                  <div
-                    class="entity-picker-placeholder full-width"
-                    id=${`entity-picker-${rowIdx}-${entIdx}`}
-                  ></div>
-                </div>
-
-                <div class="row-inline">
-                  ${this._renderSelect(
-                    "Icon mode",
-                    ent.icon_mode || "single",
-                    [
-                      ["single", "Single icon"],
-                      ["state", "By state"],
-                    ],
-                    (v) => {
-                      this._config.rows[rowIdx].entities[entIdx].icon_mode =
-                        v || "single";
-                      this._emitConfigChanged();
-                    }
-                  )}
-
-                  ${ (ent.icon_mode || "single") === "single" ? html`
-                    <ha-icon-picker
-                      label="Icon"
-                      .hass=${this.hass}
-                      .value=${ent.icon || ""}
+            ${(ent.icon_mode || "single") === "state" ? html`
+              <div class="state-icons-block">
+                ${(ent.icon_states || []).map((m, mIdx) => html`
+                  <div class="two-col">
+                    <ha-selector .hass=${this.hass} .label=${"State (e.g. on, off)"}
+                      .value=${m.state || ""}
+                      .selector=${{text: {}}}
                       @value-changed=${(e) => {
-                        this._config.rows[rowIdx].entities[entIdx].icon =
-                          e.detail.value;
+                        this._config.rows[rowIdx].entities[entIdx].icon_states[mIdx].state = e.detail.value;
+                        this._emitConfigChanged();
+                      }}
+                    ></ha-selector>
+                    <ha-icon-picker label="Icon" .hass=${this.hass} .value=${m.icon || ""}
+                      @value-changed=${(e) => {
+                        this._config.rows[rowIdx].entities[entIdx].icon_states[mIdx].icon = e.detail.value;
                         this._emitConfigChanged();
                       }}
                       @closed=${this._stopPropagation}
                     ></ha-icon-picker>
-                  ` : html`` }
-
-                  <ha-textfield
-                    type="number"
-                    label="Value font scale (1 = default)"
-                    .value=${ent.value_font_size ?? 1.0}
-                    min="0.1"
-                    step="0.1"
-                    @input=${(e) => {
-                      const v = Number(e.target.value);
-                      this._config.rows[rowIdx].entities[entIdx].value_font_size =
-                        isNaN(v) ? 1.0 : v;
-                      this._emitConfigChanged();
-                    }}
-                  ></ha-textfield>
-
-                  <ha-textfield
-                    type="number"
-                    label="Label font scale (1 = default)"
-                    .value=${ent.label_font_size ?? 1.0}
-                    min="0.1"
-                    step="0.1"
-                    @input=${(e) => {
-                      const v = Number(e.target.value);
-                      this._config.rows[rowIdx].entities[entIdx].label_font_size =
-                        isNaN(v) ? 1.0 : v;
-                      this._emitConfigChanged();
-                    }}
-                  ></ha-textfield>
-                </div>
-
-                ${ (ent.icon_mode || "single") === "state" ? html`
-                  <div class="state-icons-block">
-                    ${(ent.icon_states || []).map((m, mIdx) => html`
-                      <div class="row-inline">
-                        <ha-textfield
-                          label="State match (e.g. on, off)"
-                          .value=${m.state || ""}
-                          @input=${(e) => {
-                            const val = e.target.value;
-                            this._config.rows[rowIdx].entities[entIdx].icon_states[mIdx].state = val;
-                            this._emitConfigChanged();
-                          }}
-                        ></ha-textfield>
-
-                        <ha-icon-picker
-                          label="Icon"
-                          .hass=${this.hass}
-                          .value=${m.icon || ""}
-                          @value-changed=${(e) => {
-                            this._config.rows[rowIdx].entities[entIdx].icon_states[mIdx].icon =
-                              e.detail.value;
-                            this._emitConfigChanged();
-                          }}
-                          @closed=${this._stopPropagation}
-                        ></ha-icon-picker>
-
-                        <mwc-button
-                          dense
-                          class="danger"
-                          @click=${() => {
-                            this._config.rows[rowIdx].entities[entIdx].icon_states.splice(mIdx,1);
-                            this.requestUpdate();
-                            this._emitConfigChanged();
-                          }}
-                        >Delete</mwc-button>
-                      </div>
-                    `)}
-                    <mwc-button
-                      dense
-                      @click=${() => {
-                        if (!this._config.rows[rowIdx].entities[entIdx].icon_states)
-                          this._config.rows[rowIdx].entities[entIdx].icon_states = [];
-                        this._config.rows[rowIdx].entities[entIdx].icon_states.push({
-                          state: "",
-                          icon: "",
-                        });
-                        this.requestUpdate();
-                        this._emitConfigChanged();
-                      }}
-                    >Add state icon</mwc-button>
                   </div>
-                ` : "" }
-
-                <div class="row-inline">
-                  <ha-textfield
-                    label="Name"
-                    .value=${ent.name || ""}
-                    @input=${(e) => {
-                      this._config.rows[rowIdx].entities[entIdx].name =
-                        e.target.value;
-                      this._emitConfigChanged();
-                    }}
-                  ></ha-textfield>
+                  <div class="action-row">
+                    <ha-button class="danger" @click=${() => {
+                      this._config.rows[rowIdx].entities[entIdx].icon_states.splice(mIdx, 1);
+                      this.requestUpdate(); this._emitConfigChanged();
+                    }}>Remove</ha-button>
+                  </div>
+                `)}
+                <div class="action-row">
+                  <ha-button @click=${() => {
+                    if (!this._config.rows[rowIdx].entities[entIdx].icon_states)
+                      this._config.rows[rowIdx].entities[entIdx].icon_states = [];
+                    this._config.rows[rowIdx].entities[entIdx].icon_states.push({ state: "", icon: "" });
+                    this.requestUpdate(); this._emitConfigChanged();
+                  }}>Add state icon</ha-button>
                 </div>
+              </div>
+            ` : ""}
 
-                <div class="row-inline">
-                  ${this._renderSelect(
-                    "Color source",
-                    colorMode,
-                    [
-                      ["interval", "Color interval"],
-                      ["custom", "Custom colors"],
-                    ],
-                    (v) => {
-                      this._config.rows[rowIdx].entities[entIdx].color_mode =
-                        v || "interval";
-                      this._emitConfigChanged();
-                    }
-                  )}
+            <div class="two-col">
+              <ha-selector .hass=${this.hass} .label=${"Value font scale"}
+                .value=${ent.value_font_size ?? 1.0}
+                .selector=${{number: {min: 0.1, step: 0.1, mode: "box"}}}
+                @value-changed=${(e) => {
+                  this._config.rows[rowIdx].entities[entIdx].value_font_size = Number(e.detail.value);
+                  this._emitConfigChanged();
+                }}
+              ></ha-selector>
+              <ha-selector .hass=${this.hass} .label=${"Label font scale"}
+                .value=${ent.label_font_size ?? 1.0}
+                .selector=${{number: {min: 0.1, step: 0.1, mode: "box"}}}
+                @value-changed=${(e) => {
+                  this._config.rows[rowIdx].entities[entIdx].label_font_size = Number(e.detail.value);
+                  this._emitConfigChanged();
+                }}
+              ></ha-selector>
+            </div>
+
+            ${this._renderSelect("Color source", colorMode,
+              [["interval","Color interval"],["custom","Custom colors"]],
+              (v) => {
+                this._config.rows[rowIdx].entities[entIdx].color_mode = v || "interval";
+                this._emitConfigChanged();
+              }
+            )}
+
+            ${colorMode === "custom" ? html`
+              <div class="two-col">
+                <div class="color-row">
+                  <input type="color" class="color-swatch"
+                    .value=${ent.color_from || "#000000"}
+                    @input=${(e) => this._updateEntityColorField(rowIdx, entIdx, "color_from", e.target.value)}
+                    @click=${this._stopPropagation}
+                  />
+                  <ha-selector .hass=${this.hass} .label=${"Gradient from"}
+                    .value=${ent.color_from || ""}
+                    .selector=${{text: {}}}
+                    @value-changed=${(e) => this._updateEntityColorField(rowIdx, entIdx, "color_from", e.detail.value)}
+                  ></ha-selector>
                 </div>
-
-                ${colorMode === "custom"
-                  ? html`
-                      <div class="row-inline">
-                        <div class="color-group">
-                          <input
-                            type="color"
-                            class="color-input"
-                            .value=${ent.color_from || "#000000"}
-                            @input=${(e) =>
-                              this._updateEntityColorField(
-                                rowIdx,
-                                entIdx,
-                                "color_from",
-                                e.target.value
-                              )}
-                            @click=${this._stopPropagation}
-                          />
-                          <ha-textfield
-                            label="Gradient from"
-                            .value=${ent.color_from || ""}
-                            @input=${(e) =>
-                              this._updateEntityColorField(
-                                rowIdx,
-                                entIdx,
-                                "color_from",
-                                e.target.value
-                              )}
-                          ></ha-textfield>
-                        </div>
-
-                        <div class="color-group">
-                          <input
-                            type="color"
-                            class="color-input"
-                            .value=${ent.color_to || "#000000"}
-                            @input=${(e) =>
-                              this._updateEntityColorField(
-                                rowIdx,
-                                entIdx,
-                                "color_to",
-                                e.target.value
-                              )}
-                            @click=${this._stopPropagation}
-                          />
-                          <ha-textfield
-                            label="Gradient to"
-                            .value=${ent.color_to || ""}
-                            @input=${(e) =>
-                              this._updateEntityColorField(
-                                rowIdx,
-                                entIdx,
-                                "color_to",
-                                e.target.value
-                              )}
-                          ></ha-textfield>
-                        </div>
-                      </div>
-                    `
-                  : ""}
-
-                <div class="badges-block">
-                  ${badges.map((b, bIdx) =>
-                    this._renderBadge(rowIdx, entIdx, b, bIdx)
-                  )}
-                  <mwc-button
-                    raised
-                    dense
-                    @click=${(() => {
-                      if (!this._config.rows[rowIdx].entities[entIdx].badges)
-                        this._config.rows[rowIdx].entities[entIdx].badges = [];
-                      this._config.rows[rowIdx].entities[entIdx].badges.push({
-                        entity: "",
-                        icon: "",
-                        label: "",
-                        show_icon: true,
-                        badge_type: "value",
-                        stats_mode: "max",
-                        stats_hours: 24,
-                        media_action: "play_pause",
-                        media_info_mode: "title_artist",
-                        alarm_action: "arm_home",
-                        alarm_code: "",
-                      });
-                      this.requestUpdate();
-                      this._emitConfigChanged();
-                    })}
-                    >Add badge</mwc-button
-                  >
+                <div class="color-row">
+                  <input type="color" class="color-swatch"
+                    .value=${ent.color_to || "#000000"}
+                    @input=${(e) => this._updateEntityColorField(rowIdx, entIdx, "color_to", e.target.value)}
+                    @click=${this._stopPropagation}
+                  />
+                  <ha-selector .hass=${this.hass} .label=${"Gradient to"}
+                    .value=${ent.color_to || ""}
+                    .selector=${{text: {}}}
+                    @value-changed=${(e) => this._updateEntityColorField(rowIdx, entIdx, "color_to", e.detail.value)}
+                  ></ha-selector>
                 </div>
-              `}
-        </div>
+              </div>
+            ` : ""}
+
+            <div class="subsection-title">Badges</div>
+            ${badges.map((b, bIdx) => this._renderBadge(rowIdx, entIdx, b, bIdx))}
+            <div class="action-row">
+              <ha-button @click=${() => {
+                if (!this._config.rows[rowIdx].entities[entIdx].badges)
+                  this._config.rows[rowIdx].entities[entIdx].badges = [];
+                this._config.rows[rowIdx].entities[entIdx].badges.push({
+                  entity: "", icon: "", label: "", show_icon: true,
+                  badge_type: "value", stats_mode: "max", stats_hours: 24,
+                  media_action: "play_pause", media_info_mode: "title_artist",
+                  alarm_action: "arm_home", alarm_code: "",
+                });
+                this.requestUpdate(); this._emitConfigChanged();
+              }}>Add badge</ha-button>
+            </div>
+
+            <div class="action-row">
+              ${entIdx > 0 ? html`<ha-button @click=${() => {
+                [entities[entIdx - 1], entities[entIdx]] = [entities[entIdx], entities[entIdx - 1]];
+                this.requestUpdate(); this._emitConfigChanged();
+              }}>Move up</ha-button>` : ""}
+              ${entIdx < entities.length - 1 ? html`<ha-button @click=${() => {
+                [entities[entIdx + 1], entities[entIdx]] = [entities[entIdx], entities[entIdx + 1]];
+                this.requestUpdate(); this._emitConfigChanged();
+              }}>Move down</ha-button>` : ""}
+              <ha-button class="danger" @click=${() => {
+                entities.splice(entIdx, 1);
+                this.requestUpdate(); this._emitConfigChanged();
+              }}>Delete entity</ha-button>
+            </div>
+          </div>
+        </ha-expansion-panel>
       `;
     }
 
@@ -2166,362 +1790,210 @@ if (!customElements.get(EDITOR_TAG)) {
       const badges = this._config.rows[rowIdx].entities[entIdx].badges;
       const showIcon = b.show_icon !== false;
       const type = b.badge_type || "value";
+      const header = b.label
+        ? `${type}: ${b.label}`
+        : b.entity ? `${type}: ${b.entity}` : `Badge ${bIdx + 1}`;
 
       return html`
-        <div class="badge-block">
-          <div class="row-inline">
-            <span class="field-label">Badge entity</span>
-            <div
-              class="badge-entity-picker-placeholder full-width"
-              id=${`badge-entity-picker-${rowIdx}-${entIdx}-${bIdx}`}
-            ></div>
-          </div>
+        <ha-expansion-panel .header=${header}>
+          <div class="expansion-content">
+            <div class="picker-label">Badge entity</div>
+            <div class="badge-entity-picker-placeholder" id=${`badge-entity-picker-${rowIdx}-${entIdx}-${bIdx}`}></div>
 
-          <div class="row-inline">
-            ${this._renderSelect(
-              "Badge type",
-              type,
-              [
-                ["value", "Value badge"],
-                ["dimmer", "Dimmer (for lights)"],
-                ["stats", "Stats (history)"],
-                ["media", "Media control"],
-                ["media_info", "Media info"],
-                ["alarm", "Alarm control"],
-              ],
-              (v) => {
-                badges[bIdx].badge_type = v || "value";
-                this._emitConfigChanged();
-              }
+            ${this._renderSelect("Badge type", type,
+              [["value","Value"],["dimmer","Dimmer (lights)"],["stats","Stats (history)"],
+               ["media","Media control"],["media_info","Media info"],["alarm","Alarm control"]],
+              (v) => { badges[bIdx].badge_type = v || "value"; this._emitConfigChanged(); }
             )}
-          </div>
 
-          ${type === "stats"
-            ? html`
-                <div class="row-inline">
-                  ${this._renderSelect(
-                    "Stats mode",
-                    b.stats_mode || "max",
-                    [
-                      ["min", "Min"],
-                      ["max", "Max"],
-                      ["avg", "Average"],
-                      ["last_on", "Last on"],
-                      ["last_off", "Last off"],
-                      ["last_changed", "Last changed"],
-                    ],
-                    (v) => {
-                      badges[bIdx].stats_mode = v || "max";
-                      this._emitConfigChanged();
-                    }
-                  )}
-                  <ha-textfield
-                    type="number"
-                    label="History window (hours)"
-                    .value=${b.stats_hours ?? 24}
-                    min="1"
-                    step="1"
-                    @input=${(e) => {
-                      const v = Number(e.target.value);
-                      badges[bIdx].stats_hours = isNaN(v) ? 24 : v;
-                      this._emitConfigChanged();
-                    }}
-                  ></ha-textfield>
-                </div>
-              `
-            : ""}
+            ${type === "stats" ? html`
+              <div class="two-col">
+                ${this._renderSelect("Stats mode", b.stats_mode || "max",
+                  [["min","Min"],["max","Max"],["avg","Average"],
+                   ["last_on","Last on"],["last_off","Last off"],["last_changed","Last changed"]],
+                  (v) => { badges[bIdx].stats_mode = v || "max"; this._emitConfigChanged(); }
+                )}
+                <ha-selector .hass=${this.hass} .label=${"History window (hours)"}
+                  .value=${b.stats_hours ?? 24}
+                  .selector=${{number: {min: 1, step: 1, mode: "box"}}}
+                  @value-changed=${(e) => {
+                    badges[bIdx].stats_hours = Number(e.detail.value);
+                    this._emitConfigChanged();
+                  }}
+                ></ha-selector>
+              </div>
+            ` : ""}
 
-          ${type === "media"
-            ? html`
-                <div class="row-inline">
-                  ${this._renderSelect(
-                    "Media action",
-                    b.media_action || "play_pause",
-                    [
-                      ["play_pause", "Play/Pause"],
-                      ["play", "Play"],
-                      ["pause", "Pause"],
-                      ["stop", "Stop"],
-                      ["next", "Next track"],
-                      ["previous", "Previous track"],
-                      ["volume_up", "Volume up"],
-                      ["volume_down", "Volume down"],
-                      ["mute_toggle", "Mute toggle"],
-                    ],
-                    (v) => {
-                      badges[bIdx].media_action = v || "play_pause";
-                      this._emitConfigChanged();
-                    }
-                  )}
-                </div>
-              `
-            : ""}
+            ${type === "media" ? html`
+              ${this._renderSelect("Media action", b.media_action || "play_pause",
+                [["play_pause","Play/Pause"],["play","Play"],["pause","Pause"],["stop","Stop"],
+                 ["next","Next track"],["previous","Previous track"],
+                 ["volume_up","Volume up"],["volume_down","Volume down"],["mute_toggle","Mute toggle"]],
+                (v) => { badges[bIdx].media_action = v || "play_pause"; this._emitConfigChanged(); }
+              )}
+            ` : ""}
 
-          ${type === "media_info"
-            ? html`
-                <div class="row-inline">
-                  ${this._renderSelect(
-                    "Media info mode",
-                    b.media_info_mode || "title_artist",
-                    [
-                      ["title", "Title"],
-                      ["artist", "Artist"],
-                      ["album", "Album"],
-                      ["source", "Source"],
-                      ["title_artist", "Title + artist"],
-                    ],
-                    (v) => {
-                      badges[bIdx].media_info_mode = v || "title_artist";
-                      this._emitConfigChanged();
-                    }
-                  )}
-                </div>
-              `
-            : ""}
+            ${type === "media_info" ? html`
+              ${this._renderSelect("Media info mode", b.media_info_mode || "title_artist",
+                [["title","Title"],["artist","Artist"],["album","Album"],
+                 ["source","Source"],["title_artist","Title + artist"]],
+                (v) => { badges[bIdx].media_info_mode = v || "title_artist"; this._emitConfigChanged(); }
+              )}
+            ` : ""}
 
-          ${type === "alarm"
-            ? html`
-                <div class="row-inline">
-                  ${this._renderSelect(
-                    "Alarm action",
-                    b.alarm_action || "arm_home",
-                    [
-                      ["arm_home", "Arm home"],
-                      ["arm_away", "Arm away"],
-                      ["arm_night", "Arm night"],
-                      ["disarm", "Disarm"],
-                    ],
-                    (v) => {
-                      badges[bIdx].alarm_action = v || "arm_home";
-                      this._emitConfigChanged();
-                    }
-                  )}
-                  <ha-textfield
-                    label="Alarm code (optional)"
-                    .value=${b.alarm_code || ""}
-                    @input=${(e) => {
-                      badges[bIdx].alarm_code = e.target.value;
-                      this._emitConfigChanged();
-                    }}
-                  ></ha-textfield>
-                </div>
-              `
-            : ""}
+            ${type === "alarm" ? html`
+              <div class="two-col">
+                ${this._renderSelect("Alarm action", b.alarm_action || "arm_home",
+                  [["arm_home","Arm home"],["arm_away","Arm away"],
+                   ["arm_night","Arm night"],["disarm","Disarm"]],
+                  (v) => { badges[bIdx].alarm_action = v || "arm_home"; this._emitConfigChanged(); }
+                )}
+                <ha-selector .hass=${this.hass} .label=${"Alarm code (optional)"}
+                  .value=${b.alarm_code || ""}
+                  .selector=${{text: {}}}
+                  @value-changed=${(e) => { badges[bIdx].alarm_code = e.detail.value; this._emitConfigChanged(); }}
+                ></ha-selector>
+              </div>
+            ` : ""}
 
-          <div class="row-inline">
-            <ha-switch
-              .checked=${showIcon}
-              @change=${(e) => {
-                badges[bIdx].show_icon = e.target.checked;
-                this._emitConfigChanged();
-              }}
-            ></ha-switch>
-            <span class="field-label">Show icon</span>
-          </div>
+            <div class="toggle-row">
+              <span class="picker-label">Show icon</span>
+              <ha-switch .checked=${showIcon}
+                @change=${(e) => { badges[bIdx].show_icon = e.target.checked; this._emitConfigChanged(); }}
+              ></ha-switch>
+            </div>
 
-          <div class="row-inline">
-            ${showIcon
-              ? html`
-                  <ha-icon-picker
-                    label="Icon"
-                    .hass=${this.hass}
-                    .value=${b.icon || ""}
-                    @value-changed=${(e) => {
-                      badges[bIdx].icon = e.detail.value;
-                      this._emitConfigChanged();
-                    }}
-                    @closed=${this._stopPropagation}
-                  ></ha-icon-picker>
-                `
-              : ""}
-            <ha-textfield
-              label="Label"
-              .value=${b.label || ""}
-              @input=${(e) => {
-                badges[bIdx].label = e.target.value;
-                this._emitConfigChanged();
-              }}
-            ></ha-textfield>
+            <div class="two-col">
+              ${showIcon ? html`
+                <ha-icon-picker label="Icon" .hass=${this.hass} .value=${b.icon || ""}
+                  @value-changed=${(e) => { badges[bIdx].icon = e.detail.value; this._emitConfigChanged(); }}
+                  @closed=${this._stopPropagation}
+                ></ha-icon-picker>
+              ` : ""}
+              <ha-selector .hass=${this.hass} .label=${"Label"}
+                .value=${b.label || ""}
+                .selector=${{text: {}}}
+                @value-changed=${(e) => { badges[bIdx].label = e.detail.value; this._emitConfigChanged(); }}
+              ></ha-selector>
+            </div>
 
-            <mwc-button
-              raised
-              dense
-              class="danger"
-              @click=${(() => {
+            <div class="action-row">
+              <ha-button class="danger" @click=${() => {
                 badges.splice(bIdx, 1);
-                this.requestUpdate();
-                this._emitConfigChanged();
-              })}
-              >Delete</mwc-button
-            >
+                this.requestUpdate(); this._emitConfigChanged();
+              }}>Delete badge</ha-button>
+            </div>
           </div>
-        </div>
+        </ha-expansion-panel>
       `;
     }
 
     _css() {
       return css`
-        :host {
-          display: block;
-        }
-        .section {
-          margin-bottom: 16px;
-        }
-        .section-header {
+        :host { display: block; }
+
+        ha-selector { display: block; margin-bottom: 12px; }
+        ha-icon-picker { display: block; margin-bottom: 12px; }
+        ha-expansion-panel { display: block; margin-bottom: 8px; }
+
+        .section { margin-bottom: 24px; }
+
+        .section-title {
+          font-size: 11px;
           font-weight: 600;
-          margin-bottom: 8px;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+          color: var(--secondary-text-color);
+          margin-bottom: 12px;
+          padding-bottom: 6px;
+          border-bottom: 1px solid var(--divider-color);
         }
-        .section-header-bar {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          margin-bottom: 8px;
+
+        .subsection-title {
+          font-size: 12px;
+          font-weight: 600;
+          color: var(--secondary-text-color);
+          margin: 16px 0 8px 0;
         }
-        .section-header-actions {
-          display: flex;
-          gap: 4px;
-        }
-        .row-inline {
-          display: flex;
-          flex-wrap: wrap;
+
+        .expansion-content { padding: 12px; }
+
+        .two-col {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
           gap: 8px;
-          align-items: center;
-          margin-bottom: 6px;
+          margin-bottom: 0;
         }
-        ha-textfield,
-        ha-selector,
-        ha-entity-picker,
-        ha-icon-picker {
-          min-width: 180px;
-          flex: 1 1 160px;
-        }
-        .full-width {
-          flex: 1 1 100%;
-        }
-        .field-label {
-          font-size: 0.75rem;
-          opacity: 0.8;
-          min-width: 90px;
-        }
-        .interval-line {
-          display: flex;
-          flex-wrap: wrap;
+
+        .three-col {
+          display: grid;
+          grid-template-columns: 1fr 1fr 1fr;
           gap: 8px;
-          align-items: center;
-          margin-bottom: 8px;
-        }
-        .color-group {
-          display: flex;
-          align-items: center;
-          gap: 4px;
-          flex: 1 1 180px;
-        }
-        .color-preview {
-          width: 24px;
-          height: 24px;
-          border-radius: 4px;
-          cursor: pointer;
-        }
-        .color-preview.border {
-          border: 1px solid rgba(0, 0, 0, 0.4);
-        }
-        .color-input {
-          width: 36px;
-          height: 32px;
-          border-radius: 4px;
-          border: 1px solid rgba(0, 0, 0, 0.3);
-          padding: 0;
-          background: transparent;
-          box-sizing: border-box;
-        }
-        .interval-block {
-          border-radius: 8px;
-          border: 1px solid var(--divider-color, rgba(0,0,0,0.12));
-          background: var(--card-background-color, #fff);
-          padding: 8px;
-          margin-bottom: 10px;
-        }
-        .row-block {
-          border-radius: 8px;
-          border: 1px solid var(--divider-color, rgba(0,0,0,0.12));
-          background: var(--card-background-color, #fff);
-          padding: 8px;
           margin-bottom: 12px;
         }
-        .row-header {
-          display: flex;
-          justify-content: space-between;
+
+        .color-row {
+          display: grid;
+          grid-template-columns: 36px 1fr;
           gap: 8px;
-          margin-bottom: 8px;
-        }
-        .row-label-config {
-          display: flex;
-          flex-wrap: wrap;
-          gap: 8px;
-          flex: 1;
-        }
-        .row-buttons {
-          display: flex;
-          flex-direction: row;
           align-items: center;
-          gap: 4px;
+          margin-bottom: 0;
         }
-        .button-group-label {
-          font-size: 0.7rem;
-          text-transform: uppercase;
-          letter-spacing: 0.03em;
-          opacity: 0.7;
-          margin-right: 4px;
-        }
-        .entities-block {
-          display: flex;
-          flex-direction: column;
-          gap: 8px;
-        }
-        .entity-block {
-          border-radius: 6px;
-          padding: 6px;
-          border: 1px solid var(--divider-color, rgba(0,0,0,0.12));
-          background: var(--card-background-color, #fff);
-        }
-        .entity-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          margin-bottom: 6px;
-        }
-        .entity-title {
-          font-weight: 500;
-        }
-        .badges-block {
-          margin-top: 6px;
-          display: flex;
-          flex-direction: column;
-          gap: 4px;
-        }
-        .badge-block {
+
+        .color-swatch {
+          width: 36px;
+          height: 36px;
+          padding: 2px;
+          border: 1px solid var(--divider-color);
           border-radius: 4px;
-          padding: 4px;
-          border: 1px dashed var(--divider-color, rgba(0,0,0,0.18));
-          background: var(--card-background-color, #fff);
-        }
-        mwc-button {
-          --mdc-theme-primary: var(--primary-color);
-          text-transform: none;
-          font-weight: 500;
-          display: inline-block;
-          padding: 4px 10px;
-          margin: 2px 0;
-          border-radius: 4px;
-          border: none;
           cursor: pointer;
-          font-size: 0.8rem;
-          background: var(--primary-color, #03a9f4);
-          color: #fff;
+          background: none;
         }
-        mwc-button.danger {
+
+        .toggle-row {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding: 8px 0;
+          margin-bottom: 8px;
+          border-bottom: 1px solid var(--divider-color);
+        }
+
+        .picker-label {
+          font-size: 12px;
+          color: var(--secondary-text-color);
+          margin-bottom: 4px;
+        }
+
+        .helper-text {
+          font-size: 11px;
+          color: var(--secondary-text-color);
+          margin-bottom: 12px;
+          line-height: 1.4;
+        }
+
+        .entity-picker-placeholder,
+        .badge-entity-picker-placeholder {
+          display: block;
+          margin-bottom: 12px;
+        }
+
+        .action-row {
+          display: flex;
+          gap: 8px;
+          flex-wrap: wrap;
+          margin-top: 8px;
+          padding-top: 8px;
+          border-top: 1px solid var(--divider-color);
+        }
+
+        .state-icons-block { margin-bottom: 8px; }
+
+        .state-icon-row { align-items: center; margin-bottom: 4px; }
+
+        ha-button.danger {
+          --primary-color: var(--error-color);
           --mdc-theme-primary: var(--error-color);
-          background: var(--error-color, #ff5252);
         }
       `;
     }
