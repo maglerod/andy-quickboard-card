@@ -1783,16 +1783,6 @@ if (!customElements.get(EDITOR_TAG)) {
               }}
             ></ha-selector>
 
-            <ha-selector .hass=${this.hass} .label=${"Unit (leave blank to use entity unit)"}
-              .value=${ent.unit !== undefined ? ent.unit : ""}
-              .selector=${{text: {}}}
-              @value-changed=${(e) => {
-                const raw = e.detail.value;
-                this._config.rows[rowIdx].entities[entIdx].unit = raw === "" ? undefined : raw;
-                this._emitConfigChanged();
-              }}
-            ></ha-selector>
-
             <div class="two-col">
               ${this._renderSelect("Icon mode", ent.icon_mode || "single",
                 [["single","Single icon"],["state","By state"]],
@@ -1854,7 +1844,6 @@ if (!customElements.get(EDITOR_TAG)) {
               <span class="picker-label">Show icon</span>
               <ha-switch .checked=${ent.show_icon !== undefined ? ent.show_icon !== false : this._config.show_icon !== false}
                 @change=${(e) => {
-                  // Explicit true/false when it differs from global; clear (undefined) when it matches global
                   const globalDefault = this._config.show_icon !== false;
                   const newValue = e.target.checked;
                   this._config.rows[rowIdx].entities[entIdx].show_icon = newValue === globalDefault ? undefined : newValue;
@@ -1881,16 +1870,27 @@ if (!customElements.get(EDITOR_TAG)) {
                 }}
               ></ha-selector>
             </div>
-            <ha-selector .hass=${this.hass} .label=${"Decimal places (leave blank to use global)"}
-              .value=${ent.decimal_places ?? ""}
-              .selector=${{number: {min: 0, max: 6, step: 1, mode: "box"}}}
-              @value-changed=${(e) => {
-                const raw = e.detail.value;
-                this._config.rows[rowIdx].entities[entIdx].decimal_places =
-                  raw === "" || raw === null || raw === undefined ? undefined : Number(raw);
-                this._emitConfigChanged();
-              }}
-            ></ha-selector>
+            <div class="two-col">
+              <ha-selector .hass=${this.hass} .label=${"Decimal places (leave blank to use global)"}
+                .value=${ent.decimal_places ?? ""}
+                .selector=${{number: {min: 0, max: 6, step: 1, mode: "box"}}}
+                @value-changed=${(e) => {
+                  const raw = e.detail.value;
+                  this._config.rows[rowIdx].entities[entIdx].decimal_places =
+                    raw === "" || raw === null || raw === undefined ? undefined : Number(raw);
+                  this._emitConfigChanged();
+                }}
+              ></ha-selector>
+              <ha-selector .hass=${this.hass} .label=${"Unit (leave blank to use entity unit)"}
+                .value=${ent.unit !== undefined ? ent.unit : ""}
+                .selector=${{text: {}}}
+                @value-changed=${(e) => {
+                  const raw = e.detail.value;
+                  this._config.rows[rowIdx].entities[entIdx].unit = raw === "" ? undefined : raw;
+                  this._emitConfigChanged();
+                }}
+              ></ha-selector>
+            </div>
 
             ${this._renderSelect("Color source", colorMode,
               [["interval","Color interval"],["custom","Custom colors"]],
