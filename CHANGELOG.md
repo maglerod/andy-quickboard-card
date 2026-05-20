@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.0.6
+## v1.2.0
 - Fixed visual editor: replaced deprecated `mwc-select`/`mwc-list-item` elements with `ha-select`/`ha-list-item` for compatibility with current Home Assistant versions
 - Fixed visual editor rendering issues caused by incorrect LitElement base class resolution
 - Added per-entity color intervals with global fallback: entities can now define their own `color_intervals` array, falling back to the card-level intervals when not set
