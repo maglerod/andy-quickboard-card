@@ -1111,7 +1111,13 @@ if (!customElements.get(CARD_TAG)) {
           box-sizing: border-box;
           box-shadow: 0 4px 10px rgba(0,0,0,0.25);
           cursor: pointer;
-          transition: transform 0.12s ease, box-shadow 0.12s ease;
+          transition: transform 0.12s ease, box-shadow 0.12s ease, filter 0.1s ease;
+        }
+        .tile:hover {
+          filter: brightness(1.15);
+        }
+        .tile:active {
+          filter: brightness(0.85);
         }
         ${this._config && this._config.hover_motion !== false ? `
         .tile:hover {
