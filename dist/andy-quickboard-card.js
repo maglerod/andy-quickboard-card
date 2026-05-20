@@ -1040,10 +1040,11 @@ if (!customElements.get(CARD_TAG)) {
           cursor: pointer;
           transition: transform 0.12s ease, box-shadow 0.12s ease;
         }
+        ${this._config && this._config.hover_motion !== false ? `
         .tile:hover {
           transform: translateY(-2px);
           box-shadow: 0 6px 14px rgba(0,0,0,0.35);
-        }
+        }` : ``}
         .tile-top-row {
           display: flex;
           justify-content: space-between;
@@ -1478,6 +1479,15 @@ if (!customElements.get(EDITOR_TAG)) {
             [["pill","Pill"],["pill-strong","Pill strong"],["chip","Chip"],["underline","Underline"],["none","None"]],
             (v) => { this._config.badge_style = v || "pill"; this._emitConfigChanged(); }
           )}
+          <div class="toggle-row">
+            <span class="picker-label">Hover lift effect</span>
+            <ha-switch .checked=${this._config.hover_motion !== false}
+              @change=${(e) => {
+                this._config = { ...this._config, hover_motion: e.target.checked };
+                this._emitConfigChanged();
+              }}
+            ></ha-switch>
+          </div>
           <div class="color-row">
             <input type="color" class="color-swatch"
               .value=${this._config.dimmer_slider_color || "#FFFFFF"}
