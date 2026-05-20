@@ -420,11 +420,11 @@ if (!customElements.get(CARD_TAG)) {
       }
     }
 
-    _resolveSuffix(template, stateObj, entityId) {
+    _resolveSuffix(template, stateObj, entityId, customUnit) {
       if (!template) return "";
       const attrs = stateObj?.attributes || {};
       const state = stateObj?.state ?? "";
-      const unit = attrs.unit_of_measurement || "";
+      const unit = customUnit !== undefined ? customUnit : (attrs.unit_of_measurement || "");
       const domain = entityId ? entityId.split(".")[0] : "";
       let dimmerPct = "";
       if (domain === "light") {
@@ -471,7 +471,7 @@ if (!customElements.get(CARD_TAG)) {
 
       const suffix =
         colorInfo.suffix_text && stateObj
-          ? this._resolveSuffix(colorInfo.suffix_text, stateObj, entityId)
+          ? this._resolveSuffix(colorInfo.suffix_text, stateObj, entityId, unit)
           : "";
 
       if (entityId) {
@@ -481,7 +481,9 @@ if (!customElements.get(CARD_TAG)) {
       }
 
       const valueStr = stateObj ? stateObj.state : "—";
-      const unit = stateObj && (stateObj.attributes.unit_of_measurement || "");
+      const unit = entCfg.unit !== undefined
+        ? entCfg.unit
+        : (stateObj && (stateObj.attributes.unit_of_measurement || ""));
       const valueNum = Number(valueStr);
       const decimalPlaces = entCfg.decimal_places ?? this._config.decimal_places ?? 1;
 
@@ -830,7 +832,9 @@ if (!customElements.get(CARD_TAG)) {
             });
           } else {
             if (bState) {
-              const u = bState.attributes.unit_of_measurement || "";
+              const u = badgeCfg.unit !== undefined
+                ? badgeCfg.unit
+                : (bState.attributes.unit_of_measurement || "");
               const bNum = Number(bState.state);
               bValue.textContent = !isNaN(bNum)
                 ? `${bNum.toFixed(badgeDecimalPlaces)}${u}`
@@ -876,10 +880,9 @@ if (!customElements.get(CARD_TAG)) {
       }
 
       const stats = entry.stats;
-      const unit =
-        bState && bState.attributes
-          ? bState.attributes.unit_of_measurement || ""
-          : "";
+      const unit = badgeCfg.unit !== undefined
+        ? badgeCfg.unit
+        : (bState && bState.attributes ? bState.attributes.unit_of_measurement || "" : "");
 
       if (mode === "min") {
         return stats.min != null
@@ -1780,6 +1783,16 @@ if (!customElements.get(EDITOR_TAG)) {
               }}
             ></ha-selector>
 
+            <ha-selector .hass=${this.hass} .label=${"Unit (leave blank to use entity unit)"}
+              .value=${ent.unit !== undefined ? ent.unit : ""}
+              .selector=${{text: {}}}
+              @value-changed=${(e) => {
+                const raw = e.detail.value;
+                this._config.rows[rowIdx].entities[entIdx].unit = raw === "" ? undefined : raw;
+                this._emitConfigChanged();
+              }}
+            ></ha-selector>
+
             <div class="two-col">
               ${this._renderSelect("Icon mode", ent.icon_mode || "single",
                 [["single","Single icon"],["state","By state"]],
@@ -2214,16 +2227,27 @@ if (!customElements.get(EDITOR_TAG)) {
               ></ha-selector>
             </div>
 
-            <ha-selector .hass=${this.hass} .label=${"Decimal places (leave blank to use entity/global)"}
-              .value=${b.decimal_places ?? ""}
-              .selector=${{number: {min: 0, max: 6, step: 1, mode: "box"}}}
-              @value-changed=${(e) => {
-                const raw = e.detail.value;
-                badges[bIdx].decimal_places =
-                  raw === "" || raw === null || raw === undefined ? undefined : Number(raw);
-                this._emitConfigChanged();
-              }}
-            ></ha-selector>
+            <div class="two-col">
+              <ha-selector .hass=${this.hass} .label=${"Decimal places (leave blank to use entity/global)"}
+                .value=${b.decimal_places ?? ""}
+                .selector=${{number: {min: 0, max: 6, step: 1, mode: "box"}}}
+                @value-changed=${(e) => {
+                  const raw = e.detail.value;
+                  badges[bIdx].decimal_places =
+                    raw === "" || raw === null || raw === undefined ? undefined : Number(raw);
+                  this._emitConfigChanged();
+                }}
+              ></ha-selector>
+              <ha-selector .hass=${this.hass} .label=${"Unit (leave blank to use entity unit)"}
+                .value=${b.unit !== undefined ? b.unit : ""}
+                .selector=${{text: {}}}
+                @value-changed=${(e) => {
+                  const raw = e.detail.value;
+                  badges[bIdx].unit = raw === "" ? undefined : raw;
+                  this._emitConfigChanged();
+                }}
+              ></ha-selector>
+            </div>
 
             <div class="action-row">
               <ha-button class="danger" @click=${() => {
