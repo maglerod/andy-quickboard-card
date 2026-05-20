@@ -418,41 +418,46 @@ if (!customElements.get(CARD_TAG)) {
       const iconNameRow = document.createElement("div");
       iconNameRow.classList.add("tile-icon-name-row");
 
-      const iconEl = document.createElement("ha-icon");
+      // Resolve show_icon: per-entity overrides global; global defaults to true
+      const globalShowIcon = this._config.show_icon !== false;
+      const showTileIcon = entCfg.show_icon !== undefined ? entCfg.show_icon !== false : globalShowIcon;
 
       let iconName = "";
-      // 1) State-based icons if enabled
-      if (
-        stateObj &&
-        entCfg.icon_mode === "state" &&
-        Array.isArray(entCfg.icon_states)
-      ) {
-        const raw = String(stateObj.state ?? "");
-        const lower = raw.toLowerCase();
-        const match = entCfg.icon_states.find(
-          (m) => String(m.state ?? "").toLowerCase() === lower
-        );
-        if (match && match.icon) {
-          iconName = match.icon;
+      if (showTileIcon) {
+        // 1) State-based icons if enabled
+        if (
+          stateObj &&
+          entCfg.icon_mode === "state" &&
+          Array.isArray(entCfg.icon_states)
+        ) {
+          const raw = String(stateObj.state ?? "");
+          const lower = raw.toLowerCase();
+          const match = entCfg.icon_states.find(
+            (m) => String(m.state ?? "").toLowerCase() === lower
+          );
+          if (match && match.icon) {
+            iconName = match.icon;
+          }
         }
-      }
 
-      // 2) Fallback: custom icon / entity icon
-      if (!iconName) {
-        iconName =
-          entCfg.icon ||
-          (stateObj ? stateObj.attributes.icon || "" : "");
-      }
+        // 2) Fallback: custom icon / entity icon
+        if (!iconName) {
+          iconName =
+            entCfg.icon ||
+            (stateObj ? stateObj.attributes.icon || "" : "");
+        }
 
-      // 3) Last fallback
-      if (iconName) {
-        iconEl.setAttribute("icon", iconName);
-      } else if (entityId) {
-        iconEl.setAttribute("icon", "hass:thermometer");
-      }
+        const iconEl = document.createElement("ha-icon");
+        // 3) Last fallback
+        if (iconName) {
+          iconEl.setAttribute("icon", iconName);
+        } else if (entityId) {
+          iconEl.setAttribute("icon", "hass:thermometer");
+        }
 
-      iconEl.classList.add("tile-icon");
-      iconNameRow.appendChild(iconEl);
+        iconEl.classList.add("tile-icon");
+        iconNameRow.appendChild(iconEl);
+      }
 
       const nameEl = document.createElement("div");
       nameEl.classList.add("tile-name");
@@ -548,7 +553,10 @@ if (!customElements.get(CARD_TAG)) {
               break;
           }
 
-          const showIcon = badgeCfg.show_icon !== false;
+          // Per-badge show_icon overrides global when explicitly set; global defaults to true
+          const showIcon = badgeCfg.show_icon !== undefined
+            ? badgeCfg.show_icon !== false
+            : this._config.show_icon !== false;
 
           let badgeIconName = "";
           if (showIcon) {
@@ -1410,6 +1418,15 @@ if (!customElements.get(EDITOR_TAG)) {
               this._emitConfigChanged();
             }}
           ></ha-selector>
+          <div class="toggle-row">
+            <span class="picker-label">Show icons (global default)</span>
+            <ha-switch .checked=${this._config.show_icon !== false}
+              @change=${(e) => {
+                this._config = { ...this._config, show_icon: e.target.checked };
+                this._emitConfigChanged();
+              }}
+            ></ha-switch>
+          </div>
         </div>
 
         <div class="section">
@@ -1730,6 +1747,19 @@ if (!customElements.get(EDITOR_TAG)) {
                 </div>
               </div>
             ` : ""}
+
+            <div class="toggle-row">
+              <span class="picker-label">Show icon</span>
+              <ha-switch .checked=${ent.show_icon !== undefined ? ent.show_icon !== false : this._config.show_icon !== false}
+                @change=${(e) => {
+                  // Explicit true/false when it differs from global; clear (undefined) when it matches global
+                  const globalDefault = this._config.show_icon !== false;
+                  const newValue = e.target.checked;
+                  this._config.rows[rowIdx].entities[entIdx].show_icon = newValue === globalDefault ? undefined : newValue;
+                  this._emitConfigChanged();
+                }}
+              ></ha-switch>
+            </div>
 
             <div class="two-col">
               <ha-selector .hass=${this.hass} .label=${"Value font scale"}
