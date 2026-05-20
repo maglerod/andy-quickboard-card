@@ -156,22 +156,95 @@ if (!customElements.get(CARD_TAG)) {
       this._render();
     }
 
-    _handlePrimaryAction(ev, entityId) {
+    _handlePrimaryAction(ev, entityId, entCfg) {
       ev.stopPropagation();
       if (!this._hass || !entityId) return;
+
+      if (entCfg && entCfg.tap_action && entCfg.tap_action.action) {
+        this._executeTapAction(entCfg.tap_action, entityId);
+        return;
+      }
+
+      this._handleDefaultAction(entityId);
+    }
+
+    _handleDefaultAction(entityId) {
       const [domain] = entityId.split(".");
+      const stateObj = this._hass.states[entityId];
 
       if (domain === "script") {
         this._hass.callService("script", "turn_on", { entity_id: entityId });
-        return;
-      }
-
-      if (["light", "switch", "fan", "input_boolean"].includes(domain)) {
+      } else if (["light", "switch", "fan", "input_boolean"].includes(domain)) {
         this._hass.callService(domain, "toggle", { entity_id: entityId });
-        return;
+      } else if (domain === "cover") {
+        const state = stateObj?.state;
+        if (state === "open" || state === "opening") {
+          this._hass.callService("cover", "close_cover", { entity_id: entityId });
+        } else {
+          this._hass.callService("cover", "open_cover", { entity_id: entityId });
+        }
+      } else if (domain === "lock") {
+        const state = stateObj?.state;
+        if (state === "locked") {
+          this._hass.callService("lock", "unlock", { entity_id: entityId });
+        } else if (state === "unlocked") {
+          this._hass.callService("lock", "lock", { entity_id: entityId });
+        } else {
+          fireEvent(this, "hass-more-info", { entityId });
+        }
+      } else if (domain === "scene") {
+        this._hass.callService("scene", "turn_on", { entity_id: entityId });
+      } else if (domain === "button" || domain === "input_button") {
+        this._hass.callService(domain, "press", { entity_id: entityId });
+      } else if (domain === "automation") {
+        this._hass.callService("automation", "trigger", { entity_id: entityId });
+      } else {
+        fireEvent(this, "hass-more-info", { entityId });
       }
+    }
 
-      fireEvent(this, "hass-more-info", { entityId });
+    _executeTapAction(tapAction, entityId) {
+      const action = tapAction.action;
+      switch (action) {
+        case "toggle":
+          this._handleDefaultAction(entityId);
+          break;
+        case "more-info":
+          fireEvent(this, "hass-more-info", { entityId });
+          break;
+        case "navigate":
+          if (tapAction.navigation_path) {
+            window.history.pushState(null, "", tapAction.navigation_path);
+            fireEvent(window, "location-changed");
+          }
+          break;
+        case "url":
+          if (tapAction.url_path) {
+            window.open(tapAction.url_path, "_blank", "noopener,noreferrer");
+          }
+          break;
+        case "call-service": {
+          if (tapAction.service) {
+            const [svcDomain, svcName] = tapAction.service.split(".");
+            let serviceData = {};
+            if (tapAction.service_data) {
+              try {
+                serviceData = typeof tapAction.service_data === "object"
+                  ? tapAction.service_data
+                  : JSON.parse(tapAction.service_data);
+              } catch (_) {
+                serviceData = {};
+              }
+            }
+            if (!serviceData.entity_id) serviceData.entity_id = entityId;
+            this._hass.callService(svcDomain, svcName, serviceData);
+          }
+          break;
+        }
+        case "none":
+        default:
+          break;
+      }
     }
 
     _handleMediaAction(ev, badgeCfg, entityId) {
@@ -403,7 +476,7 @@ if (!customElements.get(CARD_TAG)) {
 
       if (entityId) {
         tile.addEventListener("click", (ev) =>
-          this._handlePrimaryAction(ev, entityId)
+          this._handlePrimaryAction(ev, entityId, entCfg)
         );
       }
 
@@ -1939,6 +2012,9 @@ if (!customElements.get(EDITOR_TAG)) {
               </div>
             ` : ""}
 
+            <div class="subsection-title">Tap action</div>
+            ${this._renderTapActionEditor(rowIdx, entIdx, ent.tap_action)}
+
             <div class="subsection-title">Badges</div>
             ${badges.map((b, bIdx) => this._renderBadge(rowIdx, entIdx, b, bIdx))}
             <div class="action-row">
@@ -1971,6 +2047,73 @@ if (!customElements.get(EDITOR_TAG)) {
             </div>
           </div>
         </ha-expansion-panel>
+      `;
+    }
+
+    _renderTapActionEditor(rowIdx, entIdx, tapAction) {
+      const action = tapAction?.action || "default";
+      const update = (field, value) => {
+        if (!this._config.rows[rowIdx].entities[entIdx].tap_action)
+          this._config.rows[rowIdx].entities[entIdx].tap_action = {};
+        if (value === "" || value === undefined || value === null) {
+          delete this._config.rows[rowIdx].entities[entIdx].tap_action[field];
+        } else {
+          this._config.rows[rowIdx].entities[entIdx].tap_action[field] = value;
+        }
+        if (this._config.rows[rowIdx].entities[entIdx].tap_action.action === "default") {
+          delete this._config.rows[rowIdx].entities[entIdx].tap_action;
+        }
+        this._emitConfigChanged();
+      };
+
+      return html`
+        ${this._renderSelect("Action", action,
+          [
+            ["default", "Default (auto by domain)"],
+            ["toggle", "Toggle"],
+            ["more-info", "More info"],
+            ["navigate", "Navigate"],
+            ["url", "Open URL"],
+            ["call-service", "Call service"],
+            ["none", "None"],
+          ],
+          (v) => update("action", v)
+        )}
+        ${action === "navigate" ? html`
+          <ha-selector .hass=${this.hass} .label=${"Navigation path (e.g. /lovelace/home)"}
+            .value=${tapAction?.navigation_path || ""}
+            .selector=${{text: {}}}
+            @value-changed=${(e) => update("navigation_path", e.detail.value)}
+          ></ha-selector>
+        ` : ""}
+        ${action === "url" ? html`
+          <ha-selector .hass=${this.hass} .label=${"URL"}
+            .value=${tapAction?.url_path || ""}
+            .selector=${{text: {}}}
+            @value-changed=${(e) => update("url_path", e.detail.value)}
+          ></ha-selector>
+        ` : ""}
+        ${action === "call-service" ? html`
+          <ha-selector .hass=${this.hass} .label=${"Service (e.g. light.turn_on)"}
+            .value=${tapAction?.service || ""}
+            .selector=${{text: {}}}
+            @value-changed=${(e) => update("service", e.detail.value)}
+          ></ha-selector>
+          <ha-selector .hass=${this.hass} .label=${"Service data (JSON, entity_id added automatically)"}
+            .value=${tapAction?.service_data
+              ? (typeof tapAction.service_data === "object"
+                  ? JSON.stringify(tapAction.service_data)
+                  : tapAction.service_data)
+              : ""}
+            .selector=${{text: {}}}
+            @value-changed=${(e) => {
+              const raw = e.detail.value;
+              if (!raw) { update("service_data", undefined); return; }
+              try { update("service_data", JSON.parse(raw)); }
+              catch (_) { update("service_data", raw); }
+            }}
+          ></ha-selector>
+        ` : ""}
       `;
     }
 
