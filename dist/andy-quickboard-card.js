@@ -918,7 +918,11 @@ if (!customElements.get(CARD_TAG)) {
         state_label: "",
         suffix_text: "",
       };
-      const intervals = this._config.color_intervals || [];
+      // Use per-entity intervals when defined, otherwise fall back to global
+      const intervals =
+        (entCfg && Array.isArray(entCfg.color_intervals) && entCfg.color_intervals.length > 0)
+          ? entCfg.color_intervals
+          : (this._config.color_intervals || []);
 
       if (entCfg && entCfg.color_mode === "custom") {
         const cf = entCfg.color_from || "#1E88E5";
@@ -1283,6 +1287,22 @@ if (!customElements.get(EDITOR_TAG)) {
         };
       }
       this._config.rows[rowIdx].entities[entIdx][field] = value;
+      this.requestUpdate();
+      this._emitConfigChanged();
+    }
+
+    _updateEntityIntervalField(rowIdx, entIdx, iIdx, field, value) {
+      const ent = this._config.rows[rowIdx].entities[entIdx];
+      if (!ent.color_intervals) ent.color_intervals = [];
+      if (!ent.color_intervals[iIdx]) {
+        ent.color_intervals[iIdx] = {
+          from: 0, to: 10,
+          color_from: "#000000", color_to: "#000000",
+          text_color: "#FFFFFF",
+          match_state: "", state_text: "", suffix_text: "",
+        };
+      }
+      ent.color_intervals[iIdx][field] = value;
       this.requestUpdate();
       this._emitConfigChanged();
     }
@@ -1748,6 +1768,108 @@ if (!customElements.get(EDITOR_TAG)) {
                     @value-changed=${(e) => this._updateEntityColorField(rowIdx, entIdx, "color_to", e.detail.value)}
                   ></ha-selector>
                 </div>
+              </div>
+            ` : ""}
+
+            ${colorMode === "interval" ? html`
+              <div class="subsection-title">Per-entity color intervals</div>
+              <div class="helper-text">Leave empty to use global color intervals.</div>
+              ${(ent.color_intervals || []).map((interval, iIdx) => html`
+                <ha-expansion-panel
+                  .header=${interval.match_state
+                    ? `Interval ${iIdx + 1} — state: ${interval.match_state}`
+                    : `Interval ${iIdx + 1} — ${interval.from ?? 0} to ${interval.to ?? 0}`}
+                >
+                  <div class="expansion-content">
+                    <div class="two-col">
+                      <ha-selector .hass=${this.hass} .label=${"From"}
+                        .value=${interval.from ?? 0}
+                        .selector=${{number: {step: 1, mode: "box"}}}
+                        @value-changed=${(e) => this._updateEntityIntervalField(rowIdx, entIdx, iIdx, "from", Number(e.detail.value))}
+                      ></ha-selector>
+                      <ha-selector .hass=${this.hass} .label=${"To"}
+                        .value=${interval.to ?? 0}
+                        .selector=${{number: {step: 1, mode: "box"}}}
+                        @value-changed=${(e) => this._updateEntityIntervalField(rowIdx, entIdx, iIdx, "to", Number(e.detail.value))}
+                      ></ha-selector>
+                    </div>
+                    <div class="three-col">
+                      <div class="color-row">
+                        <input type="color" class="color-swatch"
+                          .value=${interval.color_from || "#000000"}
+                          @input=${(e) => this._updateEntityIntervalField(rowIdx, entIdx, iIdx, "color_from", e.target.value)}
+                          @click=${this._stopPropagation}
+                        />
+                        <ha-selector .hass=${this.hass} .label=${"Gradient from"}
+                          .value=${interval.color_from || ""}
+                          .selector=${{text: {}}}
+                          @value-changed=${(e) => this._updateEntityIntervalField(rowIdx, entIdx, iIdx, "color_from", e.detail.value)}
+                        ></ha-selector>
+                      </div>
+                      <div class="color-row">
+                        <input type="color" class="color-swatch"
+                          .value=${interval.color_to || "#000000"}
+                          @input=${(e) => this._updateEntityIntervalField(rowIdx, entIdx, iIdx, "color_to", e.target.value)}
+                          @click=${this._stopPropagation}
+                        />
+                        <ha-selector .hass=${this.hass} .label=${"Gradient to"}
+                          .value=${interval.color_to || ""}
+                          .selector=${{text: {}}}
+                          @value-changed=${(e) => this._updateEntityIntervalField(rowIdx, entIdx, iIdx, "color_to", e.detail.value)}
+                        ></ha-selector>
+                      </div>
+                      <div class="color-row">
+                        <input type="color" class="color-swatch"
+                          .value=${interval.text_color || "#FFFFFF"}
+                          @input=${(e) => this._updateEntityIntervalField(rowIdx, entIdx, iIdx, "text_color", e.target.value)}
+                          @click=${this._stopPropagation}
+                        />
+                        <ha-selector .hass=${this.hass} .label=${"Text color"}
+                          .value=${interval.text_color || ""}
+                          .selector=${{text: {}}}
+                          @value-changed=${(e) => this._updateEntityIntervalField(rowIdx, entIdx, iIdx, "text_color", e.detail.value)}
+                        ></ha-selector>
+                      </div>
+                    </div>
+                    <ha-selector .hass=${this.hass} .label=${"Match state (optional, e.g. on, off)"}
+                      .value=${interval.match_state || ""}
+                      .selector=${{text: {}}}
+                      @value-changed=${(e) => this._updateEntityIntervalField(rowIdx, entIdx, iIdx, "match_state", e.detail.value)}
+                    ></ha-selector>
+                    <div class="two-col">
+                      <ha-selector .hass=${this.hass} .label=${"State label (optional)"}
+                        .value=${interval.state_text || ""}
+                        .selector=${{text: {}}}
+                        @value-changed=${(e) => this._updateEntityIntervalField(rowIdx, entIdx, iIdx, "state_text", e.detail.value)}
+                      ></ha-selector>
+                      <ha-selector .hass=${this.hass} .label=${"Suffix text (supports variables)"}
+                        .value=${interval.suffix_text || ""}
+                        .selector=${{text: {}}}
+                        @value-changed=${(e) => this._updateEntityIntervalField(rowIdx, entIdx, iIdx, "suffix_text", e.detail.value)}
+                      ></ha-selector>
+                    </div>
+                    <div class="helper-text">Variables: &lt;state&gt; &lt;unit&gt; &lt;dimmer_pct&gt; &lt;source&gt; &lt;title&gt; &lt;artist&gt; &lt;album&gt; &lt;title_artist&gt;</div>
+                    <div class="action-row">
+                      <ha-button class="danger" @click=${() => {
+                        this._config.rows[rowIdx].entities[entIdx].color_intervals.splice(iIdx, 1);
+                        this.requestUpdate(); this._emitConfigChanged();
+                      }}>Delete interval</ha-button>
+                    </div>
+                  </div>
+                </ha-expansion-panel>
+              `)}
+              <div class="action-row">
+                <ha-button @click=${() => {
+                  if (!this._config.rows[rowIdx].entities[entIdx].color_intervals)
+                    this._config.rows[rowIdx].entities[entIdx].color_intervals = [];
+                  this._config.rows[rowIdx].entities[entIdx].color_intervals.push({
+                    from: 0, to: 10,
+                    color_from: "#1E88E5", color_to: "#1E88E5",
+                    text_color: "#FFFFFF",
+                    match_state: "", state_text: "", suffix_text: "",
+                  });
+                  this.requestUpdate(); this._emitConfigChanged();
+                }}>Add interval</ha-button>
               </div>
             ` : ""}
 
