@@ -410,6 +410,7 @@ if (!customElements.get(CARD_TAG)) {
       const valueStr = stateObj ? stateObj.state : "—";
       const unit = stateObj && (stateObj.attributes.unit_of_measurement || "");
       const valueNum = Number(valueStr);
+      const decimalPlaces = entCfg.decimal_places ?? this._config.decimal_places ?? 1;
 
       const topRow = document.createElement("div");
       topRow.classList.add("tile-top-row");
@@ -487,7 +488,7 @@ if (!customElements.get(CARD_TAG)) {
       }
 
       if (!isNaN(valueNum)) {
-        let txt = `${valueNum.toFixed(1)}${unit ? unit : ""}`;
+        let txt = `${valueNum.toFixed(decimalPlaces)}${unit ? unit : ""}`;
         if (suffix) txt += ` ${suffix}`;
         valueEl.textContent = txt;
       } else if (stateObj) {
@@ -523,6 +524,7 @@ if (!customElements.get(CARD_TAG)) {
             this._hass ? this._hass.states[badgeCfg.entity] : undefined;
           const entityId = badgeCfg.entity;
           const type = badgeCfg.badge_type || "value";
+          const badgeDecimalPlaces = badgeCfg.decimal_places ?? decimalPlaces;
 
           const bWrap = document.createElement("div");
           bWrap.classList.add("badge");
@@ -620,7 +622,8 @@ if (!customElements.get(CARD_TAG)) {
             const txt = this._getStatsBadgeValue(
               badgeCfg,
               entityId,
-              bState
+              bState,
+              badgeDecimalPlaces
             );
             bValue.textContent = txt;
             bTextWrap.appendChild(bValue);
@@ -747,7 +750,10 @@ if (!customElements.get(CARD_TAG)) {
           } else {
             if (bState) {
               const u = bState.attributes.unit_of_measurement || "";
-              bValue.textContent = `${bState.state}${u ? u : ""}`;
+              const bNum = Number(bState.state);
+              bValue.textContent = !isNaN(bNum)
+                ? `${bNum.toFixed(badgeDecimalPlaces)}${u}`
+                : `${bState.state}${u ? u : ""}`;
             } else {
               bValue.textContent = "—";
             }
@@ -768,7 +774,7 @@ if (!customElements.get(CARD_TAG)) {
       return tile;
     }
 
-    _getStatsBadgeValue(badgeCfg, entityId, bState) {
+    _getStatsBadgeValue(badgeCfg, entityId, bState, decimalPlaces = 1) {
       const mode = badgeCfg.stats_mode || "max";
       const hours = Number(badgeCfg.stats_hours || 24);
       const key = `${entityId}|${hours}`;
@@ -796,17 +802,17 @@ if (!customElements.get(CARD_TAG)) {
 
       if (mode === "min") {
         return stats.min != null
-          ? `${stats.min.toFixed(1)}${unit}`
+          ? `${stats.min.toFixed(decimalPlaces)}${unit}`
           : "—";
       }
       if (mode === "max") {
         return stats.max != null
-          ? `${stats.max.toFixed(1)}${unit}`
+          ? `${stats.max.toFixed(decimalPlaces)}${unit}`
           : "—";
       }
       if (mode === "avg") {
         return stats.avg != null
-          ? `${stats.avg.toFixed(1)}${unit}`
+          ? `${stats.avg.toFixed(decimalPlaces)}${unit}`
           : "—";
       }
       if (mode === "last_on") {
@@ -1394,6 +1400,16 @@ if (!customElements.get(EDITOR_TAG)) {
               this._emitConfigChanged();
             }}
           ></ha-selector>
+          <ha-selector
+            .hass=${this.hass}
+            .label=${"Decimal places (global default)"}
+            .value=${this._config.decimal_places ?? 1}
+            .selector=${{number: {min: 0, max: 6, step: 1, mode: "box"}}}
+            @value-changed=${(e) => {
+              this._config = { ...this._config, decimal_places: Number(e.detail.value) };
+              this._emitConfigChanged();
+            }}
+          ></ha-selector>
         </div>
 
         <div class="section">
@@ -1733,6 +1749,16 @@ if (!customElements.get(EDITOR_TAG)) {
                 }}
               ></ha-selector>
             </div>
+            <ha-selector .hass=${this.hass} .label=${"Decimal places (leave blank to use global)"}
+              .value=${ent.decimal_places ?? ""}
+              .selector=${{number: {min: 0, max: 6, step: 1, mode: "box"}}}
+              @value-changed=${(e) => {
+                const raw = e.detail.value;
+                this._config.rows[rowIdx].entities[entIdx].decimal_places =
+                  raw === "" || raw === null || raw === undefined ? undefined : Number(raw);
+                this._emitConfigChanged();
+              }}
+            ></ha-selector>
 
             ${this._renderSelect("Color source", colorMode,
               [["interval","Color interval"],["custom","Custom colors"]],
@@ -1998,6 +2024,17 @@ if (!customElements.get(EDITOR_TAG)) {
                 @value-changed=${(e) => { badges[bIdx].label = e.detail.value; this._emitConfigChanged(); }}
               ></ha-selector>
             </div>
+
+            <ha-selector .hass=${this.hass} .label=${"Decimal places (leave blank to use entity/global)"}
+              .value=${b.decimal_places ?? ""}
+              .selector=${{number: {min: 0, max: 6, step: 1, mode: "box"}}}
+              @value-changed=${(e) => {
+                const raw = e.detail.value;
+                badges[bIdx].decimal_places =
+                  raw === "" || raw === null || raw === undefined ? undefined : Number(raw);
+                this._emitConfigChanged();
+              }}
+            ></ha-selector>
 
             <div class="action-row">
               <ha-button class="danger" @click=${() => {
