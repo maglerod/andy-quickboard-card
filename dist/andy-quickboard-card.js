@@ -469,6 +469,12 @@ if (!customElements.get(CARD_TAG)) {
       if (colorInfo.background) tile.style.background = colorInfo.background;
       if (colorInfo.text_color) tile.style.color = colorInfo.text_color;
 
+      const valueStr = stateObj ? stateObj.state : "—";
+      const unit = entCfg.unit !== undefined
+        ? entCfg.unit
+        : (stateObj && (stateObj.attributes.unit_of_measurement || ""));
+
+      
       const suffix =
         colorInfo.suffix_text && stateObj
           ? this._resolveSuffix(colorInfo.suffix_text, stateObj, entityId, unit)
@@ -480,10 +486,6 @@ if (!customElements.get(CARD_TAG)) {
         );
       }
 
-      const valueStr = stateObj ? stateObj.state : "—";
-      const unit = entCfg.unit !== undefined
-        ? entCfg.unit
-        : (stateObj && (stateObj.attributes.unit_of_measurement || ""));
       const valueNum = Number(valueStr);
       const decimalPlaces = entCfg.decimal_places ?? this._config.decimal_places ?? 1;
 
