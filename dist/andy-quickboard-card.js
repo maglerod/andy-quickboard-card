@@ -1,6 +1,6 @@
 /**
  * Andy Quickboard Card
- * v1.2.0
+ * v1.2.1
  * ------------------------------------------------------------------
  * Developed by: Andreas ("AndyBonde") with some help from AI :).
  *
@@ -21,7 +21,7 @@ const CARD_TAG = "andy-quickboard-card";
 const EDITOR_TAG = "andy-quickboard-card-editor";
 
 console.info(
-  `%c Andy Quickboard Card %c v1.2.0 loaded `,
+  `%c Andy Quickboard Card %c v1.2.1 loaded `,
   "color: white; background: #1565C0; padding: 4px 8px; border-radius: 4px 0 0 4px;",
   "color: white; background: #1E88E5; padding: 4px 8px; border-radius: 0 4px 4px 0;"
 );
@@ -46,6 +46,10 @@ if (!customElements.get(CARD_TAG)) {
     constructor() {
       super();
       this._statsCache = {};
+      this._mainMenuStack = [{ id: "", show_back: false, show_close: false }];
+      this._popupMenuStack = [];
+      this._hoveredTileKey = "";
+      this._hoverContinuityTargets = [];
     }
 
     static getConfigElement() {
@@ -64,6 +68,8 @@ if (!customElements.get(CARD_TAG)) {
             color_from: "#1565C0",
             color_to: "#1E88E5",
             text_color: "#FFFFFF",
+            override_theme_colors: true,
+            override_theme_text_color: true,
             match_state: "",
             state_text: "",
             suffix_text: "",
@@ -74,6 +80,8 @@ if (!customElements.get(CARD_TAG)) {
             color_from: "#2E7D32",
             color_to: "#43A047",
             text_color: "#FFFFFF",
+            override_theme_colors: true,
+            override_theme_text_color: true,
             match_state: "",
             state_text: "",
             suffix_text: "",
@@ -84,6 +92,8 @@ if (!customElements.get(CARD_TAG)) {
             color_from: "#F9A825",
             color_to: "#F57F17",
             text_color: "#FFFFFF",
+            override_theme_colors: true,
+            override_theme_text_color: true,
             match_state: "",
             state_text: "",
             suffix_text: "",
@@ -94,6 +104,8 @@ if (!customElements.get(CARD_TAG)) {
             color_from: "#C62828",
             color_to: "#E53935",
             text_color: "#FFFFFF",
+            override_theme_colors: true,
+            override_theme_text_color: true,
             match_state: "",
             state_text: "",
             suffix_text: "",
@@ -104,9 +116,17 @@ if (!customElements.get(CARD_TAG)) {
           padding_vertical: 12,
           padding_horizontal: 16,
           box_shadow: "0 4px 12px rgba(0,0,0,0.25)",
+          shadow_strength: 60,
+          shadow_color_mode: "ha",
+          shadow_color: "#FF9800",
         },
         badge_style: "pill",
         dimmer_slider_color: "#FFFFFF",
+        button_themes: [],
+        default_theme_id: "",
+        main_menu_theme_id: "",
+        show_button_type_indicator: false,
+        menus: [],
         rows: [
           {
             label: "Main floor",
@@ -138,6 +158,16 @@ if (!customElements.get(CARD_TAG)) {
       }
       this._config = config;
       if (!this._statsCache) this._statsCache = {};
+      if (!this._mainMenuStack || !this._mainMenuStack.length) {
+        this._mainMenuStack = [{ id: "", show_back: false, show_close: false }];
+      }
+      const currentMain = this._mainMenuStack[this._mainMenuStack.length - 1]?.id || "";
+      if (currentMain && !this._findMenu(currentMain)) {
+        this._mainMenuStack = [{ id: "", show_back: false, show_close: false }];
+      }
+      if (this._popupMenuStack?.some((entry) => entry.id && !this._findMenu(entry.id))) {
+        this._popupMenuStack = [];
+      }
       if (this.shadowRoot) this._render();
     }
 
@@ -148,7 +178,11 @@ if (!customElements.get(CARD_TAG)) {
 
     getCardSize() {
       if (!this._config || !this._config.rows) return 4;
-      return this._config.rows.length * 2;
+      const rowCounts = [
+        this._config.rows.length,
+        ...(this._config.menus || []).map((menu) => (menu.rows || []).length),
+      ];
+      return Math.max(1, ...rowCounts) * 2;
     }
 
     connectedCallback() {
@@ -156,16 +190,199 @@ if (!customElements.get(CARD_TAG)) {
       this._render();
     }
 
-    _handlePrimaryAction(ev, entityId, entCfg) {
+    _findMenu(menuId) {
+      return (this._config?.menus || []).find((menu) => menu.id === menuId);
+    }
+
+    _findTheme(themeId) {
+      return (this._config?.button_themes || []).find((theme) => theme.id === themeId);
+    }
+
+    _resolveTheme(entCfg, menuId = "", rowCfg = null) {
+      const buttonChoice = entCfg?.theme_id;
+      if (buttonChoice === "__none__") return null;
+      if (buttonChoice) return this._findTheme(buttonChoice) || null;
+
+      const rowChoice = rowCfg?.theme_id;
+      if (rowChoice === "__none__") return null;
+      if (rowChoice) return this._findTheme(rowChoice) || null;
+
+      const scopeChoice = menuId
+        ? this._findMenu(menuId)?.theme_id
+        : this._config?.main_menu_theme_id;
+      if (scopeChoice === "__none__") return null;
+      if (scopeChoice) return this._findTheme(scopeChoice) || null;
+
+      return this._findTheme(this._config?.default_theme_id) || null;
+    }
+
+    _menuRows(menuId) {
+      if (!menuId) return this._config?.rows || [];
+      return this._findMenu(menuId)?.rows || [];
+    }
+
+    _menuTitle(menuId) {
+      if (menuId === "__back__") return "Back";
+      if (menuId === "__root__") return this._config?.title || "Main menu";
+      if (!menuId) return this._config?.title || "";
+      const menu = this._findMenu(menuId);
+      return menu?.title || menu?.name || menuId;
+    }
+
+    _isActiveState(state) {
+      const value = String(state ?? "").trim().toLowerCase();
+      return !["", "0", "off", "closed", "idle", "standby", "unavailable", "unknown", "disarmed"].includes(value);
+    }
+
+    _collectMenuStats(menuId, visited = new Set(), countedEntities = new Set()) {
+      if (!menuId || menuId === "__root__") menuId = "";
+      const visitKey = menuId || "__root__";
+      if (visited.has(visitKey)) return { active: 0, total: 0 };
+      visited.add(visitKey);
+
+      let active = 0;
+      let total = 0;
+      this._menuRows(menuId).forEach((row) => {
+        (row.entities || []).forEach((item) => {
+          if (item.button_type === "menu" && item.menu_target && !String(item.menu_target).startsWith("__")) {
+            const nested = this._collectMenuStats(item.menu_target, visited, countedEntities);
+            active += nested.active;
+            total += nested.total;
+            return;
+          }
+          if (!item.entity || !this._hass?.states?.[item.entity]) return;
+          if (countedEntities.has(item.entity)) return;
+          countedEntities.add(item.entity);
+          total += 1;
+          if (this._isActiveState(this._hass.states[item.entity].state)) active += 1;
+        });
+      });
+      return { active, total };
+    }
+
+    _resolveTileState(entCfg) {
+      const entityId = entCfg?.entity || "";
+      if (entCfg?.button_type !== "menu") {
+        return {
+          entityId,
+          stateObj: this._hass && entityId ? this._hass.states[entityId] : undefined,
+          menuStats: null,
+        };
+      }
+
+      const statusMode = entCfg.menu_state_mode || (entityId ? "entity" : "auto");
+      if (statusMode === "none") {
+        return { entityId, stateObj: undefined, menuStats: null };
+      }
+      if (statusMode === "entity" && entityId) {
+        return {
+          entityId,
+          stateObj: this._hass?.states?.[entityId],
+          menuStats: null,
+        };
+      }
+
+      if (entCfg.menu_target === "__back__" || entCfg.menu_target === "__root__") {
+        const state = entCfg.menu_target === "__back__" ? "back" : "home";
+        return {
+          entityId,
+          stateObj: {
+            entity_id: `quickboard_menu.${state}`,
+            state,
+            attributes: { friendly_name: this._menuTitle(entCfg.menu_target), unit_of_measurement: "" },
+          },
+          menuStats: null,
+        };
+      }
+
+      const stats = this._collectMenuStats(entCfg.menu_target || "");
+      return {
+        entityId,
+        stateObj: {
+          entity_id: `quickboard_menu.${entCfg.menu_target || "menu"}`,
+          state: String(stats.active),
+          attributes: {
+            friendly_name: entCfg.name || this._menuTitle(entCfg.menu_target),
+            unit_of_measurement: `/${stats.total}`,
+          },
+        },
+        menuStats: stats,
+      };
+    }
+
+    _handleMenuAction(ev, entCfg) {
+      ev?.stopPropagation?.();
+      const target = entCfg?.menu_target || "";
+      if (!target) return;
+      if (target === "__back__") {
+        this._goBackMenu();
+        return;
+      }
+      if (target === "__root__") {
+        if (this._popupMenuStack.length) this._popupMenuStack = [];
+        this._mainMenuStack = [{ id: "", show_back: false, show_close: false }];
+        this._render();
+        return;
+      }
+      if (!this._findMenu(target)) return;
+
+      const displayMode = entCfg.menu_display || "replace";
+      const entry = {
+        id: target,
+        show_back: entCfg.menu_show_back === true,
+        show_close: displayMode === "popup" || entCfg.menu_show_close === true,
+      };
+      if (displayMode === "popup") {
+        this._popupMenuStack.push(entry);
+      } else if (this._popupMenuStack.length) {
+        this._popupMenuStack.push(entry);
+      } else {
+        this._mainMenuStack.push(entry);
+      }
+      this._render();
+    }
+
+    _goBackMenu() {
+      if (this._popupMenuStack.length) {
+        this._popupMenuStack.pop();
+      } else if (this._mainMenuStack.length > 1) {
+        this._mainMenuStack.pop();
+      }
+      this._render();
+    }
+
+    _closeMenu() {
+      if (this._popupMenuStack.length) {
+        this._popupMenuStack = [];
+      } else {
+        this._mainMenuStack = [{ id: "", show_back: false, show_close: false }];
+      }
+      this._render();
+    }
+
+    _handlePrimaryAction(ev, entityId, entCfg, sourceMenuId = "") {
       ev.stopPropagation();
+      if (entCfg?.button_type === "menu") {
+        this._handleMenuAction(ev, entCfg);
+        return;
+      }
       if (!this._hass || !entityId) return;
 
       if (entCfg && entCfg.tap_action && entCfg.tap_action.action) {
         this._executeTapAction(entCfg.tap_action, entityId);
-        return;
+      } else {
+        this._handleDefaultAction(entityId);
       }
+      this._handleMenuActionAfterTap(entCfg, sourceMenuId);
+    }
 
-      this._handleDefaultAction(entityId);
+    _handleMenuActionAfterTap(entCfg, sourceMenuId = "") {
+      if (!sourceMenuId) return;
+      const sourceMenu = this._findMenu(sourceMenuId);
+      const action = entCfg?.menu_action_after_tap || sourceMenu?.action_after_tap || "stay";
+      if (action === "stay") return;
+      if (action === "back") this._goBackMenu();
+      else if (action === "close") this._closeMenu();
     }
 
     _handleDefaultAction(entityId) {
@@ -335,6 +552,9 @@ if (!customElements.get(CARD_TAG)) {
     _render() {
       if (!this._config || !this.shadowRoot) return;
       const root = this.shadowRoot;
+      const hoveredSlot = root.querySelector?.(".tile-slot:hover");
+      if (hoveredSlot?.dataset?.hoverKey) this._hoveredTileKey = hoveredSlot.dataset.hoverKey;
+      this._hoverContinuityTargets = [];
       const style = document.createElement("style");
       style.textContent = this._css();
       root.innerHTML = "";
@@ -346,14 +566,67 @@ if (!customElements.get(CARD_TAG)) {
       const wrapper = document.createElement("div");
       wrapper.classList.add("wrapper");
 
-      if (this._config.title) {
-        const titleEl = document.createElement("div");
-        titleEl.classList.add("card-title");
-        titleEl.textContent = this._config.title;
-        wrapper.appendChild(titleEl);
+      const mainEntry = this._mainMenuStack[this._mainMenuStack.length - 1] || {
+        id: "", show_back: false, show_close: false,
+      };
+      this._renderMenuView(wrapper, mainEntry, false);
+      haCard.appendChild(wrapper);
+
+      if (this._popupMenuStack.length) {
+        const popupEntry = this._popupMenuStack[this._popupMenuStack.length - 1];
+        const backdrop = document.createElement("div");
+        backdrop.classList.add("menu-popup-backdrop");
+        const popup = document.createElement("div");
+        popup.classList.add("menu-popup");
+        popup.addEventListener("click", (ev) => ev.stopPropagation());
+        this._renderMenuView(popup, popupEntry, true);
+        backdrop.appendChild(popup);
+        haCard.appendChild(backdrop);
       }
 
-      (this._config.rows || []).forEach((row) => {
+      root.appendChild(haCard);
+      const continuityTargets = this._hoverContinuityTargets;
+      if (continuityTargets.length && typeof window.requestAnimationFrame === "function") {
+        window.requestAnimationFrame(() => {
+          continuityTargets.forEach(({ slot, tile, key }) => {
+            if (typeof slot.matches === "function" && !slot.matches(":hover")) {
+              tile.classList.remove("hover-continuity");
+              if (this._hoveredTileKey === key) this._hoveredTileKey = "";
+            }
+          });
+        });
+      }
+    }
+
+    _renderMenuView(container, entry, isPopup) {
+      const menuId = entry?.id || "";
+      const title = this._menuTitle(menuId);
+      const showClose = isPopup || entry?.show_close;
+      if (title || entry?.show_back || showClose) {
+        const header = document.createElement("div");
+        header.classList.add("menu-view-header");
+        if (title) {
+          const titleEl = document.createElement("div");
+          titleEl.classList.add("card-title");
+          titleEl.textContent = title;
+          header.appendChild(titleEl);
+        }
+        const actions = document.createElement("div");
+        actions.classList.add("menu-view-actions");
+        if (entry?.show_back) {
+          actions.appendChild(this._createMenuControl("mdi:arrow-left", "Back", () => this._goBackMenu()));
+        }
+        if (showClose) {
+          actions.appendChild(this._createMenuControl("mdi:close", "Close", () => this._closeMenu()));
+        }
+        if (actions.childElementCount) header.appendChild(actions);
+        container.appendChild(header);
+      }
+
+      const rowsContainer = document.createElement("div");
+      rowsContainer.classList.add("menu-rows");
+      if (isPopup) rowsContainer.classList.add("popup-rows");
+      this._menuRows(menuId).forEach((row, rowIdx) => {
         const rowWrapper = document.createElement("div");
         rowWrapper.classList.add("row-wrapper");
 
@@ -365,9 +638,25 @@ if (!customElements.get(CARD_TAG)) {
         const tilesRow = document.createElement("div");
         tilesRow.classList.add("tiles-row");
 
-        (row.entities || []).forEach((entCfg) => {
-          const tile = this._createTile(entCfg);
-          tilesRow.appendChild(tile);
+        (row.entities || []).forEach((entCfg, entIdx) => {
+          const tile = this._createTile(entCfg, menuId, row);
+          const slot = document.createElement("div");
+          slot.classList.add("tile-slot");
+          const hoverKey = `${isPopup ? "popup" : "main"}:${menuId || "root"}:${rowIdx}:${entIdx}`;
+          slot.dataset.hoverKey = hoverKey;
+          slot.addEventListener("pointerenter", () => {
+            this._hoveredTileKey = hoverKey;
+          });
+          slot.addEventListener("pointerleave", () => {
+            if (this._hoveredTileKey === hoverKey) this._hoveredTileKey = "";
+            tile.classList.remove("hover-continuity");
+          });
+          if (this._hoveredTileKey === hoverKey) {
+            tile.classList.add("hover-continuity");
+            this._hoverContinuityTargets.push({ slot, tile, key: hoverKey });
+          }
+          slot.appendChild(tile);
+          tilesRow.appendChild(slot);
         });
 
         rowWrapper.appendChild(tilesRow);
@@ -377,11 +666,28 @@ if (!customElements.get(CARD_TAG)) {
           rowWrapper.appendChild(rowLabelBottom);
         }
 
-        wrapper.appendChild(rowWrapper);
+        rowsContainer.appendChild(rowWrapper);
       });
+      container.appendChild(rowsContainer);
+    }
 
-      haCard.appendChild(wrapper);
-      root.appendChild(haCard);
+    _createMenuControl(icon, label, handler) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.classList.add("menu-control");
+      button.setAttribute("aria-label", label);
+      button.title = label;
+      const iconEl = document.createElement("ha-icon");
+      iconEl.setAttribute("icon", icon);
+      button.appendChild(iconEl);
+      const text = document.createElement("span");
+      text.textContent = label;
+      button.appendChild(text);
+      button.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        handler();
+      });
+      return button;
     }
 
     _createRowLabel(text, position) {
@@ -392,11 +698,14 @@ if (!customElements.get(CARD_TAG)) {
       return el;
     }
 
-    _applyBoxStyle(tile) {
+    _applyBoxStyle(tile, theme = null) {
       const boxStyle = this._config.box_style || {};
 
-      if (boxStyle.border_radius !== undefined && boxStyle.border_radius !== null) {
-        const br = boxStyle.border_radius;
+      const radius = theme?.border_radius !== undefined && theme?.border_radius !== null && theme?.border_radius !== ""
+        ? theme.border_radius
+        : boxStyle.border_radius;
+      if (radius !== undefined && radius !== null) {
+        const br = radius;
         if (typeof br === "number" || /^[0-9.]+$/.test(String(br))) {
           tile.style.borderRadius = `${br}px`;
         } else {
@@ -415,9 +724,78 @@ if (!customElements.get(CARD_TAG)) {
         tile.style.padding = boxStyle.padding;
       }
 
-      if (boxStyle.box_shadow) {
-        tile.style.boxShadow = boxStyle.box_shadow;
+      const borderWidth = Number(theme?.border_width || 0);
+      if (borderWidth > 0) {
+        tile.style.border = `${borderWidth}px solid ${theme?.border_color || "rgba(255,255,255,.3)"}`;
       }
+    }
+
+    _shadowPresetCss(preset) {
+      switch (preset) {
+        case "none": return "none";
+        case "soft": return "0 2px 6px rgba(0,0,0,0.18)";
+        case "strong": return "0 8px 20px rgba(0,0,0,0.35)";
+        case "glow": return "0 0 18px rgba(0,0,0,0.45)";
+        case "medium": return "0 4px 12px rgba(0,0,0,0.25)";
+        default: return "";
+      }
+    }
+
+    _recolorShadow(shadow, color) {
+      if (!shadow || shadow === "none") return shadow || "none";
+      const match = String(shadow).match(/^\s*((?:-?[\d.]+px|0)\s+(?:-?[\d.]+px|0)\s+(?:[\d.]+px|0)(?:\s+(?:[\d.]+px|0))?)/i);
+      const geometry = match?.[1] || "0 4px 12px";
+      return `${geometry} ${color}`;
+    }
+
+    _resolveShadowStrength(...values) {
+      for (const value of values) {
+        if (value === null || value === undefined || (typeof value === "string" && value.trim() === "")) continue;
+        const parsed = Number(value);
+        if (Number.isFinite(parsed)) return Math.min(100, Math.max(0, parsed));
+      }
+      return 60;
+    }
+
+    _applyShadowStyle(tile, entCfg, theme, colorInfo) {
+      const boxStyle = this._config.box_style || {};
+      const buttonPreset = entCfg?.shadow_preset || "inherit";
+      let shadow = buttonPreset !== "inherit"
+        ? this._shadowPresetCss(buttonPreset)
+        : (theme?.box_shadow || boxStyle.box_shadow || "0 4px 12px rgba(0,0,0,0.25)");
+      if (!shadow || shadow === "none") {
+        tile.style.boxShadow = "none";
+        return;
+      }
+
+      let mode = "";
+      let customColor = "";
+      if (entCfg?.shadow_color_mode && entCfg.shadow_color_mode !== "inherit") {
+        mode = entCfg.shadow_color_mode;
+        customColor = entCfg.shadow_color || "";
+      } else if (theme?.shadow_color_mode && theme.shadow_color_mode !== "inherit") {
+        mode = theme.shadow_color_mode;
+        customColor = theme.shadow_color || "";
+      } else {
+        mode = boxStyle.shadow_color_mode || "ha";
+        customColor = boxStyle.shadow_color || "";
+      }
+
+      const strength = this._resolveShadowStrength(
+        entCfg?.shadow_strength,
+        theme?.shadow_strength,
+        boxStyle.shadow_strength,
+        60
+      );
+      let color = mode === "default" ? "#000000" : "var(--primary-color, #03a9f4)";
+      if (mode === "custom") color = customColor || color;
+      if (mode === "active") {
+        color = colorInfo?.shadow_color || colorInfo?.active_color || theme?.color_from || customColor || color;
+      }
+      tile.style.boxShadow = this._recolorShadow(
+        shadow,
+        `color-mix(in srgb, ${color} ${strength}%, transparent)`
+      );
     }
 
     _resolveSuffix(template, stateObj, entityId, customUnit) {
@@ -455,19 +833,19 @@ if (!customElements.get(CARD_TAG)) {
       return res;
     }
 
-    _createTile(entCfg) {
+    _createTile(entCfg, menuId = "", rowCfg = null) {
       const tile = document.createElement("div");
       tile.classList.add("tile");
 
-      this._applyBoxStyle(tile);
+      const theme = this._resolveTheme(entCfg, menuId, rowCfg);
+      this._applyBoxStyle(tile, theme);
 
-      const entityId = entCfg.entity;
-      const stateObj =
-        this._hass && entityId ? this._hass.states[entityId] : undefined;
+      const { entityId, stateObj, menuStats } = this._resolveTileState(entCfg);
 
-      const colorInfo = this._getColorForState(stateObj, entCfg);
+      const colorInfo = this._getColorForState(stateObj, entCfg, theme);
       if (colorInfo.background) tile.style.background = colorInfo.background;
       if (colorInfo.text_color) tile.style.color = colorInfo.text_color;
+      this._applyShadowStyle(tile, entCfg, theme, colorInfo);
 
       const valueStr = stateObj ? stateObj.state : "—";
       const unit = entCfg.unit !== undefined
@@ -480,14 +858,16 @@ if (!customElements.get(CARD_TAG)) {
           ? this._resolveSuffix(colorInfo.suffix_text, stateObj, entityId, unit)
           : "";
 
-      if (entityId) {
+      if (entityId || entCfg.button_type === "menu") {
         tile.addEventListener("click", (ev) =>
-          this._handlePrimaryAction(ev, entityId, entCfg)
+          this._handlePrimaryAction(ev, entityId, entCfg, menuId)
         );
       }
 
       const valueNum = Number(valueStr);
-      const decimalPlaces = entCfg.decimal_places ?? this._config.decimal_places ?? 1;
+      const decimalPlaces = menuStats
+        ? 0
+        : (entCfg.decimal_places ?? this._config.decimal_places ?? 1);
 
       const topRow = document.createElement("div");
       topRow.classList.add("tile-top-row");
@@ -528,8 +908,10 @@ if (!customElements.get(CARD_TAG)) {
         // 3) Last fallback
         if (iconName) {
           iconEl.setAttribute("icon", iconName);
+        } else if (entCfg.button_type === "menu") {
+          iconEl.setAttribute("icon", "mdi:view-grid-plus-outline");
         } else if (entityId) {
-          iconEl.setAttribute("icon", "hass:thermometer");
+          iconEl.setAttribute("icon", "mdi:thermometer");
         }
 
         iconEl.classList.add("tile-icon");
@@ -540,6 +922,7 @@ if (!customElements.get(CARD_TAG)) {
       nameEl.classList.add("tile-name");
       nameEl.textContent =
         entCfg.name ||
+        (entCfg.button_type === "menu" ? this._menuTitle(entCfg.menu_target) : "") ||
         (stateObj ? stateObj.attributes.friendly_name || entityId : entityId);
 
       const baseLabelRem = 1.0;
@@ -593,9 +976,14 @@ if (!customElements.get(CARD_TAG)) {
         valueEl.textContent = "—";
       }
 
-      tile.appendChild(valueEl);
+      const hideMenuStatus = entCfg.button_type === "menu" && entCfg.menu_state_mode === "none";
+      if (!hideMenuStatus) tile.appendChild(valueEl);
 
-      const badgeStyle = this._config.badge_style || "pill";
+      const badgeStyle = entCfg.badge_style && entCfg.badge_style !== "inherit"
+        ? entCfg.badge_style
+        : theme?.badge_style && theme.badge_style !== "inherit"
+          ? theme.badge_style
+          : (this._config.badge_style || "pill");
 
       if (entCfg.badges && entCfg.badges.length) {
         const badgesRow = document.createElement("div");
@@ -858,6 +1246,17 @@ if (!customElements.get(CARD_TAG)) {
         tile.appendChild(badgesRow);
       }
 
+      if (this._config.show_button_type_indicator === true) {
+        tile.classList.add("has-button-type-mark");
+        const typeMark = document.createElement("div");
+        typeMark.classList.add("button-type-mark");
+        typeMark.title = entCfg.button_type === "menu" ? "Menu button" : "Entity button";
+        const typeIcon = document.createElement("ha-icon");
+        typeIcon.setAttribute("icon", entCfg.button_type === "menu" ? "mdi:menu" : "mdi:flash-outline");
+        typeMark.appendChild(typeIcon);
+        tile.appendChild(typeMark);
+      }
+
       return tile;
     }
 
@@ -1003,18 +1402,72 @@ if (!customElements.get(CARD_TAG)) {
       }
     }
 
-    _getColorForState(stateObj, entCfg) {
+    _findColorInterval(stateObj, entCfg) {
+      if (!stateObj) return null;
+      const intervals = (entCfg && Array.isArray(entCfg.color_intervals) && entCfg.color_intervals.length > 0)
+        ? entCfg.color_intervals
+        : (this._config.color_intervals || []);
+      const rawState = String(stateObj.state ?? "");
+      const numericVal = Number(rawState);
+      const hasNumeric = !isNaN(numericVal);
+      for (const interval of intervals) {
+        if (interval.match_state) {
+          if (rawState.toLowerCase() === String(interval.match_state).toLowerCase()) return interval;
+          continue;
+        }
+        if (hasNumeric && numericVal >= (interval.from ?? 0) && numericVal < (interval.to ?? 0)) return interval;
+      }
+      return null;
+    }
+
+    _isIntervalOverrideEnabled(interval, field) {
+      const value = interval?.[field];
+      if (value !== undefined && value !== null) return value !== false && value !== "false";
+      const legacyValue = interval?.override_theme;
+      if (legacyValue !== undefined && legacyValue !== null) return legacyValue !== false && legacyValue !== "false";
+      return true;
+    }
+
+    _getColorForState(stateObj, entCfg, theme = null) {
       const result = {
         background: "",
         text_color: "",
         state_label: "",
         suffix_text: "",
+        active_color: "",
+        shadow_color: "",
       };
-      // Use per-entity intervals when defined, otherwise fall back to global
-      const intervals =
-        (entCfg && Array.isArray(entCfg.color_intervals) && entCfg.color_intervals.length > 0)
-          ? entCfg.color_intervals
-          : (this._config.color_intervals || []);
+      const matchedInterval = this._findColorInterval(stateObj, entCfg);
+      const applyMatchedInterval = ({ buttonColors = true, textColor = true, textContent = true } = {}) => {
+        const cf = matchedInterval.color_from || "#1E88E5";
+        const ct = matchedInterval.color_to || cf;
+        if (buttonColors) {
+          result.background = cf === ct ? cf : `linear-gradient(135deg, ${cf}, ${ct})`;
+          result.active_color = cf;
+          result.shadow_color = matchedInterval.shadow_color || "";
+        }
+        if (textColor) result.text_color = matchedInterval.text_color || "#FFFFFF";
+        if (textContent) {
+          result.state_label = matchedInterval.match_state ? (matchedInterval.state_text || "") : "";
+          result.suffix_text = matchedInterval.suffix_text || "";
+        }
+        return result;
+      };
+      if (theme) {
+        const cf = theme.color_from || "#1E88E5";
+        const ct = theme.color_to || cf;
+        result.background = cf === ct ? cf : `linear-gradient(135deg, ${cf}, ${ct})`;
+        result.text_color = theme.text_color || "#FFFFFF";
+        result.active_color = cf;
+        if (matchedInterval) {
+          return applyMatchedInterval({
+            buttonColors: this._isIntervalOverrideEnabled(matchedInterval, "override_theme_colors"),
+            textColor: this._isIntervalOverrideEnabled(matchedInterval, "override_theme_text_color"),
+            textContent: true,
+          });
+        }
+        return result;
+      }
 
       if (entCfg && entCfg.color_mode === "custom") {
         const cf = entCfg.color_from || "#1E88E5";
@@ -1022,47 +1475,13 @@ if (!customElements.get(CARD_TAG)) {
         result.background =
           cf === ct ? cf : `linear-gradient(135deg, ${cf}, ${ct})`;
         result.text_color = "#FFFFFF";
+        result.active_color = cf;
+        result.shadow_color = matchedInterval?.shadow_color || "";
         return result;
       }
 
-      if (!stateObj) return result;
-
-      const rawState = String(stateObj.state ?? "");
-      const numericVal = Number(rawState);
-      const hasNumeric = !isNaN(numericVal);
-
-      for (const i of intervals) {
-        const from = i.from ?? 0;
-        const to = i.to ?? 0;
-        const cf = i.color_from || "#1E88E5";
-        const ct = i.color_to || cf;
-        const bg =
-          cf === ct ? cf : `linear-gradient(135deg, ${cf}, ${ct})`;
-        const txt = i.text_color || "#FFFFFF";
-
-        if (i.match_state) {
-          if (
-            rawState.toLowerCase() === String(i.match_state).toLowerCase()
-          ) {
-            result.background = bg;
-            result.text_color = txt;
-            result.state_label = i.state_text || "";
-            result.suffix_text = i.suffix_text || "";
-            return result;
-          }
-          continue;
-        }
-
-        if (!hasNumeric) continue;
-        if (numericVal >= from && numericVal < to) {
-          result.background = bg;
-          result.text_color = txt;
-          result.state_label = "";
-          result.suffix_text = i.suffix_text || "";
-          return result;
-        }
-      }
-      return result;
+      if (!matchedInterval) return result;
+      return applyMatchedInterval();
     }
 
     _css() {
@@ -1071,7 +1490,8 @@ if (!customElements.get(CARD_TAG)) {
           display: block;
         }
         ha-card.quickboard-card {
-          overflow: hidden;
+          overflow: visible;
+          position: relative;
         }
         .wrapper {
           padding: 16px;
@@ -1080,7 +1500,63 @@ if (!customElements.get(CARD_TAG)) {
         .card-title {
           font-weight: 600;
           font-size: 1.1rem;
+          margin: 0;
+          flex: 1 1 auto;
+        }
+        .menu-view-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
           margin-bottom: 12px;
+        }
+        .menu-view-actions {
+          display: flex;
+          gap: 6px;
+          flex: 0 0 auto;
+        }
+        .menu-control {
+          appearance: none;
+          border: 1px solid var(--divider-color, rgba(127,127,127,.3));
+          border-radius: 10px;
+          background: color-mix(in srgb, var(--primary-color, #03a9f4) 12%, var(--card-background-color, #fff));
+          color: var(--primary-text-color);
+          min-height: 36px;
+          padding: 6px 10px;
+          display: inline-flex;
+          align-items: center;
+          gap: 5px;
+          cursor: pointer;
+          font: inherit;
+          font-size: .82rem;
+        }
+        .menu-control ha-icon {
+          width: 18px;
+          height: 18px;
+        }
+        .menu-popup-backdrop {
+          position: fixed;
+          inset: 0;
+          z-index: 1000;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 14px;
+          box-sizing: border-box;
+          background: rgba(0,0,0,.48);
+          backdrop-filter: blur(2px);
+        }
+        .menu-popup {
+          width: min(calc(100vw - 28px), 720px);
+          max-height: calc(100vh - 28px);
+          overflow: auto;
+          box-sizing: border-box;
+          padding: 16px;
+          border-radius: 18px;
+          border: 1px solid var(--divider-color, rgba(127,127,127,.3));
+          background: var(--ha-card-background, var(--card-background-color, #fff));
+          color: var(--primary-text-color);
+          box-shadow: 0 16px 50px rgba(0,0,0,.45);
         }
         .row-wrapper {
           margin-bottom: 12px;
@@ -1104,8 +1580,15 @@ if (!customElements.get(CARD_TAG)) {
           flex-direction: row;
           gap: 12px;
         }
-        .tiles-row > .tile {
+        .tiles-row > .tile-slot {
           flex: 1 1 0;
+          min-width: 0;
+          display: flex;
+        }
+        .tile-slot > .tile {
+          flex: 1 1 auto;
+          min-width: 0;
+          width: 100%;
         }
         .tile {
           position: relative;
@@ -1118,14 +1601,44 @@ if (!customElements.get(CARD_TAG)) {
           cursor: pointer;
           transition: transform 0.12s ease, box-shadow 0.12s ease, filter 0.1s ease;
         }
-        .tile:hover {
+        .button-type-mark {
+          position: absolute;
+          top: 7px;
+          right: 7px;
+          width: 12px;
+          height: 12px;
+          display: grid;
+          place-items: center;
+          background: transparent;
+          border: 0;
+          color: inherit;
+          opacity: .28;
+          filter: saturate(.7);
+          overflow: hidden;
+          contain: paint;
+          pointer-events: none;
+        }
+        .button-type-mark ha-icon {
+          display: block;
+          width: 9px;
+          height: 9px;
+          --mdc-icon-size: 9px;
+          line-height: 9px;
+        }
+        .tile.has-button-type-mark .tile-top-row { padding-right: 8px; }
+        .tile-slot:hover > .tile,
+        .tile.hover-continuity {
           filter: brightness(1.15);
         }
-        .tile:active {
+        .tile-slot > .tile:active {
           filter: brightness(0.85);
         }
+        .tile.hover-continuity {
+          transition: none;
+        }
         ${this._config && this._config.hover_motion !== false ? `
-        .tile:hover {
+        .tile-slot:hover > .tile,
+        .tile.hover-continuity {
           transform: translateY(-2px);
           box-shadow: 0 6px 14px rgba(0,0,0,0.35);
         }` : ``}
@@ -1142,6 +1655,8 @@ if (!customElements.get(CARD_TAG)) {
         .tile-icon {
           width: 20px;
           height: 20px;
+          color: inherit !important;
+          --icon-primary-color: currentColor;
         }
         .tile-name {
           font-size: 1rem;
@@ -1219,7 +1734,7 @@ if (!customElements.get(CARD_TAG)) {
     window.customCards.push({
       type: CARD_TAG,
       name: "Andy Quickboard Card",
-      description: "Quickboard-style powerful multi-entity view with many features",
+      description: "Quickboard with reusable buttons, badges, color intervals and nested menus",
     });
   }
 }
@@ -1252,10 +1767,155 @@ if (!customElements.get(EDITOR_TAG)) {
         color_intervals: [],
         box_style: {},
         rows: [],
+        menus: [],
+        button_themes: [],
+        default_theme_id: "",
+        main_menu_theme_id: "",
+        show_button_type_indicator: false,
         badge_style: "pill",
         dimmer_slider_color: "#FFFFFF",
         ...config,
       };
+    }
+
+    _rowsForScope(menuId = "") {
+      if (!menuId) {
+        if (!Array.isArray(this._config.rows)) this._config.rows = [];
+        return this._config.rows;
+      }
+      const menu = (this._config.menus || []).find((item) => item.id === menuId);
+      if (!menu) return [];
+      if (!Array.isArray(menu.rows)) menu.rows = [];
+      return menu.rows;
+    }
+
+    _scopeKey(menuId = "") {
+      if (!menuId) return "root";
+      const index = (this._config.menus || []).findIndex((item) => item.id === menuId);
+      return `menu${Math.max(index, 0)}`;
+    }
+
+    _entityAt(menuId, rowIdx, entIdx) {
+      return this._rowsForScope(menuId)?.[rowIdx]?.entities?.[entIdx];
+    }
+
+    _newEntity() {
+      return {
+        button_type: "entity",
+        entity: "", icon: "", icon_mode: "single", icon_states: [],
+        name: "", value_font_size: 1.0, label_font_size: 1.0,
+        color_mode: "interval", color_from: "", color_to: "", badges: [],
+      };
+    }
+
+    _newRow() {
+      return { label: "", label_position: "none", theme_id: "", entities: [] };
+    }
+
+    _makeMenuId() {
+      const used = new Set((this._config.menus || []).map((menu) => menu.id));
+      let number = used.size + 1;
+      let id = `menu_${number}`;
+      while (used.has(id)) id = `menu_${++number}`;
+      return id;
+    }
+
+    _makeThemeId() {
+      const used = new Set((this._config.button_themes || []).map((theme) => theme.id));
+      let number = used.size + 1;
+      let id = `theme_${number}`;
+      while (used.has(id)) id = `theme_${++number}`;
+      return id;
+    }
+
+    _newTheme() {
+      const id = this._makeThemeId();
+      return {
+        id,
+        name: `Theme ${(this._config.button_themes || []).length + 1}`,
+        color_from: "#1565C0",
+        color_to: "#1E88E5",
+        text_color: "#FFFFFF",
+        border_color: "#FFFFFF",
+        border_width: 0,
+        border_radius: 18,
+        box_shadow: "0 4px 12px rgba(0,0,0,0.25)",
+        shadow_strength: 60,
+        shadow_color_mode: "active",
+        shadow_color: "#FF9800",
+        badge_style: "inherit",
+      };
+    }
+
+    _themeOptions(mode = "global") {
+      const themes = (this._config.button_themes || []).map((theme) => [theme.id, theme.name || theme.id]);
+      if (mode === "global") return [["", "None (use button colors)"], ...themes];
+      return [
+        ["", "Inherit from parent/global"],
+        ["__none__", "No theme (use button colors)"],
+        ...themes,
+      ];
+    }
+
+    _renameTheme(themeIdx, requestedId) {
+      const themes = this._config.button_themes || [];
+      const theme = themes[themeIdx];
+      if (!theme) return;
+      const oldId = theme.id;
+      const cleaned = String(requestedId || "").trim().toLowerCase()
+        .replace(/[^a-z0-9_-]+/g, "_").replace(/^_+|_+$/g, "");
+      if (!cleaned || themes.some((item, idx) => idx !== themeIdx && item.id === cleaned)) {
+        this.requestUpdate();
+        return;
+      }
+      theme.id = cleaned;
+      if (this._config.default_theme_id === oldId) this._config.default_theme_id = cleaned;
+      if (this._config.main_menu_theme_id === oldId) this._config.main_menu_theme_id = cleaned;
+      (this._config.menus || []).forEach((menu) => {
+        if (menu.theme_id === oldId) menu.theme_id = cleaned;
+      });
+      this._walkRows((row) => {
+        if (row.theme_id === oldId) row.theme_id = cleaned;
+      });
+      this._walkEntities((entity) => {
+        if (entity.theme_id === oldId) entity.theme_id = cleaned;
+      });
+      this.requestUpdate();
+      this._emitConfigChanged();
+    }
+
+    _themeUsage(themeId) {
+      const usages = [];
+      if (this._config.default_theme_id === themeId) usages.push("Global default");
+      if (this._config.main_menu_theme_id === themeId) usages.push("Main menu");
+      (this._config.menus || []).forEach((menu) => {
+        if (menu.theme_id === themeId) usages.push(`Menu: ${menu.title || menu.id}`);
+      });
+      const scanRows = (rows, location) => (rows || []).forEach((row, rowIdx) =>
+        {
+          if (row.theme_id === themeId) usages.push(`${location}, row ${rowIdx + 1}`);
+          (row.entities || []).forEach((entity, entIdx) => {
+          if (entity.theme_id === themeId) usages.push(`${location}, row ${rowIdx + 1}, ${entity.name || `button ${entIdx + 1}`}`);
+          });
+        }
+      );
+      scanRows(this._config.rows, "Main menu");
+      (this._config.menus || []).forEach((menu) => scanRows(menu.rows, menu.title || menu.id));
+      return usages;
+    }
+
+    _clearThemeReferences(themeId) {
+      if (this._config.default_theme_id === themeId) this._config.default_theme_id = "";
+      if (this._config.main_menu_theme_id === themeId) this._config.main_menu_theme_id = "";
+      (this._config.menus || []).forEach((menu) => {
+        if (menu.theme_id === themeId) menu.theme_id = "";
+      });
+      this._walkRows((row) => {
+        if (row.theme_id === themeId) row.theme_id = "";
+      });
+      this._walkEntities((entity) => {
+        if (entity.theme_id === themeId) entity.theme_id = "";
+      });
     }
 
     _emitConfigChanged() {
@@ -1268,6 +1928,11 @@ if (!customElements.get(EDITOR_TAG)) {
 
     _stopPropagation(ev) {
       ev.stopPropagation();
+    }
+
+    _confirmDelete(item, details = "") {
+      const message = `Delete ${item}?${details ? `\n\n${details}` : ""}\n\nThis cannot be undone.`;
+      return window.confirm(message);
     }
 
     _selectOptions(options) {
@@ -1357,6 +2022,9 @@ if (!customElements.get(EDITOR_TAG)) {
           color_from: "#000000",
           color_to: "#000000",
           text_color: "#FFFFFF",
+          shadow_color: "",
+          override_theme_colors: true,
+          override_theme_text_color: true,
           match_state: "",
           state_text: "",
           suffix_text: "",
@@ -1367,37 +2035,28 @@ if (!customElements.get(EDITOR_TAG)) {
       this._emitConfigChanged();
     }
 
-    _updateEntityColorField(rowIdx, entIdx, field, value) {
-      if (!this._config.rows) this._config.rows = [];
-      if (!this._config.rows[rowIdx]) this._config.rows[rowIdx] = { entities: [] };
-      if (!this._config.rows[rowIdx].entities)
-        this._config.rows[rowIdx].entities = [];
-      if (!this._config.rows[rowIdx].entities[entIdx]) {
-        this._config.rows[rowIdx].entities[entIdx] = {
-          entity: "",
-          icon: "",
-          name: "",
-          value_font_size: 1.0,
-          label_font_size: 1.0,
-          color_mode: "interval",
-          color_from: "",
-          color_to: "",
-          badges: [],
-        };
-      }
-      this._config.rows[rowIdx].entities[entIdx][field] = value;
+    _updateEntityColorField(rowIdx, entIdx, field, value, menuId = "") {
+      const rows = this._rowsForScope(menuId);
+      if (!rows[rowIdx]) rows[rowIdx] = this._newRow();
+      if (!rows[rowIdx].entities) rows[rowIdx].entities = [];
+      if (!rows[rowIdx].entities[entIdx]) rows[rowIdx].entities[entIdx] = this._newEntity();
+      rows[rowIdx].entities[entIdx][field] = value;
       this.requestUpdate();
       this._emitConfigChanged();
     }
 
-    _updateEntityIntervalField(rowIdx, entIdx, iIdx, field, value) {
-      const ent = this._config.rows[rowIdx].entities[entIdx];
+    _updateEntityIntervalField(rowIdx, entIdx, iIdx, field, value, menuId = "") {
+      const ent = this._entityAt(menuId, rowIdx, entIdx);
+      if (!ent) return;
       if (!ent.color_intervals) ent.color_intervals = [];
       if (!ent.color_intervals[iIdx]) {
         ent.color_intervals[iIdx] = {
           from: 0, to: 10,
           color_from: "#000000", color_to: "#000000",
           text_color: "#FFFFFF",
+          shadow_color: "",
+          override_theme_colors: true,
+          override_theme_text_color: true,
           match_state: "", state_text: "", suffix_text: "",
         };
       }
@@ -1412,6 +2071,7 @@ if (!customElements.get(EDITOR_TAG)) {
       if (v.includes("0 2px 6px")) return "soft";
       if (v.includes("0 4px 12px")) return "medium";
       if (v.includes("0 8px 20px")) return "strong";
+      if (v.includes("0 0 18px")) return "glow";
       return "medium";
     }
 
@@ -1423,25 +2083,63 @@ if (!customElements.get(EDITOR_TAG)) {
           return "0 2px 6px rgba(0,0,0,0.18)";
         case "strong":
           return "0 8px 20px rgba(0,0,0,0.35)";
+        case "glow":
+          return "0 0 18px rgba(0,0,0,0.45)";
         case "medium":
         default:
           return "0 4px 12px rgba(0,0,0,0.25)";
       }
     }
 
-    updated() {
-      const rows = this._config.rows || [];
-      const root = this.renderRoot;
+    _resolveShadowStrength(...values) {
+      for (const value of values) {
+        if (value === null || value === undefined || (typeof value === "string" && value.trim() === "")) continue;
+        const parsed = Number(value);
+        if (Number.isFinite(parsed)) return Math.min(100, Math.max(0, parsed));
+      }
+      return 60;
+    }
 
-      rows.forEach((row, rowIdx) => {
+    _previewShadowCss(shadow, mode, customColor, activeColor, strength) {
+      if (!shadow || shadow === "none") return "none";
+      let resolvedMode = mode || "inherit";
+      let resolvedCustom = customColor || "";
+      if (resolvedMode === "inherit") {
+        resolvedMode = this._config.box_style?.shadow_color_mode || "ha";
+        resolvedCustom = this._config.box_style?.shadow_color || "";
+      }
+      const resolvedStrength = this._resolveShadowStrength(
+        strength,
+        this._config.box_style?.shadow_strength,
+        60
+      );
+      let color = resolvedMode === "default" ? "#000000" : "var(--primary-color, #03a9f4)";
+      if (resolvedMode === "custom") color = resolvedCustom || color;
+      if (resolvedMode === "active") color = activeColor || color;
+      const match = String(shadow).match(/^\s*((?:-?[\d.]+px|0)\s+(?:-?[\d.]+px|0)\s+(?:[\d.]+px|0)(?:\s+(?:[\d.]+px|0))?)/i);
+      return `${match?.[1] || "0 4px 12px"} color-mix(in srgb, ${color} ${resolvedStrength}%, transparent)`;
+    }
+
+    updated() {
+      const root = this.renderRoot;
+      const scopes = [
+        { menuId: "", rows: this._config.rows || [] },
+        ...(this._config.menus || []).map((menu) => ({ menuId: menu.id, rows: menu.rows || [] })),
+      ];
+
+      scopes.forEach(({ menuId, rows }) => rows.forEach((row, rowIdx) => {
+        const scopeKey = this._scopeKey(menuId);
         (row.entities || []).forEach((ent, entIdx) => {
           const entContainer = root.querySelector(
-            `#entity-picker-${rowIdx}-${entIdx}`
+            `#entity-picker-${scopeKey}-${rowIdx}-${entIdx}`
           );
           if (entContainer && !entContainer._controlAttached) {
             entContainer.innerHTML = "";
-            const ctrl = this._mkEntityControl("Entity", ent.entity || "", (val) => {
-              this._config.rows[rowIdx].entities[entIdx].entity = val;
+            const label = ent.button_type === "menu" ? "Status entity (optional)" : "Entity";
+            const ctrl = this._mkEntityControl(label, ent.entity || "", (val) => {
+              const target = this._entityAt(menuId, rowIdx, entIdx);
+              if (!target) return;
+              target.entity = val;
               this._emitConfigChanged();
             });
             entContainer.appendChild(ctrl);
@@ -1450,7 +2148,7 @@ if (!customElements.get(EDITOR_TAG)) {
 
           (ent.badges || []).forEach((b, bIdx) => {
             const badgeContainer = root.querySelector(
-              `#badge-entity-picker-${rowIdx}-${entIdx}-${bIdx}`
+              `#badge-entity-picker-${scopeKey}-${rowIdx}-${entIdx}-${bIdx}`
             );
             if (badgeContainer && !badgeContainer._controlAttached) {
               badgeContainer.innerHTML = "";
@@ -1458,8 +2156,10 @@ if (!customElements.get(EDITOR_TAG)) {
                 "Badge entity",
                 b.entity || "",
                 (val) => {
-                  this._config.rows[rowIdx].entities[entIdx].badges[bIdx].entity =
-                    val;
+                  const target = this._entityAt(menuId, rowIdx, entIdx);
+                  if (!target?.badges?.[bIdx]) return;
+                  target.badges[bIdx].entity = val;
+                  this.requestUpdate();
                   this._emitConfigChanged();
                 }
               );
@@ -1468,7 +2168,7 @@ if (!customElements.get(EDITOR_TAG)) {
             }
           });
         });
-      });
+      }));
     }
 
     render() {
@@ -1480,9 +2180,12 @@ if (!customElements.get(EDITOR_TAG)) {
 
       return html`
         <style>${this._css()}</style>
+        <div class="editor-wrap">
+        <div class="editor-top-title">Andy Quickboard Card v1.2.1</div>
 
-        <div class="section">
-          <div class="section-title">Basic</div>
+        <details class="section editor-section" open>
+          <summary class="section-summary">${this._renderSectionTitle("mdi:tune-variant", "Basic")}</summary>
+          <div class="section-body">
           <ha-selector
             .hass=${this.hass}
             .label=${"Title"}
@@ -1512,10 +2215,12 @@ if (!customElements.get(EDITOR_TAG)) {
               }}
             ></ha-switch>
           </div>
-        </div>
+          </div>
+        </details>
 
-        <div class="section">
-          <div class="section-title">Appearance</div>
+        <details class="section editor-section">
+          <summary class="section-summary">${this._renderSectionTitle("mdi:palette-outline", "Appearance", `${(this._config.button_themes || []).length} theme${(this._config.button_themes || []).length === 1 ? "" : "s"}`)}</summary>
+          <div class="section-body">
           <div class="three-col">
             <ha-selector
               .hass=${this.hass}
@@ -1551,14 +2256,39 @@ if (!customElements.get(EDITOR_TAG)) {
               }}
             ></ha-selector>
           </div>
-          ${this._renderSelect("Box shadow", this._shadowPresetFromCss(boxStyle.box_shadow),
-            [["none","None"],["soft","Soft"],["medium","Medium"],["strong","Strong"]],
-            (preset) => {
-              this._ensureBoxStyle();
-              this._config.box_style.box_shadow = this._shadowCssFromPreset(preset || "medium");
-              this._emitConfigChanged();
-            }
-          )}
+          <div class="three-col">
+            ${this._renderSelect("Default button shadow", this._shadowPresetFromCss(boxStyle.box_shadow),
+              [["none","None"],["soft","Soft"],["medium","Medium"],["strong","Strong"],["glow","Glow"]],
+              (preset) => {
+                this._ensureBoxStyle();
+                this._config.box_style.box_shadow = this._shadowCssFromPreset(preset || "medium");
+                this._emitConfigChanged();
+              }
+            )}
+            <ha-selector
+              .hass=${this.hass}
+              .label=${"Shadow strength (%)"}
+              .value=${boxStyle.shadow_strength ?? 60}
+              .selector=${{number: {min: 0, max: 100, step: 5, mode: "box"}}}
+              @value-changed=${(e) => {
+                this._ensureBoxStyle();
+                this._config.box_style.shadow_strength = Number(e.detail.value);
+                this._emitConfigChanged();
+              }}
+            ></ha-selector>
+            ${this._renderSelect("Shadow color source", boxStyle.shadow_color_mode || "ha",
+              [["ha","Home Assistant theme color"],["active","Active theme / color interval"],["custom","Custom color"],["default","Classic black"]],
+              (value) => {
+                this._ensureBoxStyle();
+                this._config.box_style.shadow_color_mode = value || "ha";
+                this.requestUpdate();
+                this._emitConfigChanged();
+              }
+            )}
+          </div>
+          ${(boxStyle.shadow_color_mode || "ha") === "custom" ? html`
+            ${this._renderShadowColorControl(boxStyle, "shadow_color", "Shadow color", "#FF9800")}
+          ` : ""}
           ${this._renderSelect("Badge style", this._config.badge_style || "pill",
             [["pill","Pill"],["pill-strong","Pill strong"],["chip","Chip"],["underline","Underline"],["none","None"]],
             (v) => { this._config.badge_style = v || "pill"; this._emitConfigChanged(); }
@@ -1568,6 +2298,18 @@ if (!customElements.get(EDITOR_TAG)) {
             <ha-switch .checked=${this._config.hover_motion !== false}
               @change=${(e) => {
                 this._config = { ...this._config, hover_motion: e.target.checked };
+                this._emitConfigChanged();
+              }}
+            ></ha-switch>
+          </div>
+          <div class="toggle-row">
+            <div>
+              <div class="picker-label">Show button-type symbol on the live card</div>
+              <div class="inline-note">The Menu/Entity symbol is always visible in the visual editor.</div>
+            </div>
+            <ha-switch .checked=${this._config.show_button_type_indicator === true}
+              @change=${(e) => {
+                this._config.show_button_type_indicator = e.target.checked;
                 this._emitConfigChanged();
               }}
             ></ha-switch>
@@ -1586,16 +2328,28 @@ if (!customElements.get(EDITOR_TAG)) {
               @value-changed=${(e) => this._updateGlobalColorField("dimmer_slider_color", e.detail.value)}
             ></ha-selector>
           </div>
-        </div>
+          ${this._renderThemes()}
+          </div>
+        </details>
 
-        <div class="section">
-          <div class="section-title">Color intervals</div>
+        <details class="section editor-section">
+          <summary class="section-summary">${this._renderSectionTitle("mdi:gradient-horizontal", "Color intervals", `${intervals.length} interval${intervals.length === 1 ? "" : "s"}`)}</summary>
+          <div class="section-body">
+          <div class="section-note">
+            Color intervals control each button’s background, text, optional shadow glow and state/suffix text.
+            Numeric entities match the From/To range; non-numeric entities can match an exact state.
+            Buttons with their own intervals override these global defaults. Automatic menu buttons use
+            the number of active entities in their destination menu. When a button has an active reusable theme,
+            the two theme-override switches independently control its button colors and text/icon color. Without an active theme, those switches have no effect.
+          </div>
           ${intervals.map((interval, idx) => html`
-            <ha-expansion-panel
-              .header=${interval.match_state
-                ? `Interval ${idx + 1} — state: ${interval.match_state}`
-                : `Interval ${idx + 1} — ${interval.from ?? 0} to ${interval.to ?? 0}`}
-            >
+            <ha-expansion-panel class="interval-editor-panel color-preview-panel"
+              style=${this._editorPanelColorStyle(interval, "#1E88E5", "#FFFFFF")}>
+              <div slot="header" class="color-preview-header">
+                <span>${interval.match_state
+                  ? `Interval ${idx + 1} — state: ${interval.match_state}`
+                  : `Interval ${idx + 1} — ${interval.from ?? 0} to ${interval.to ?? 0}`}</span>
+              </div>
               <div class="expansion-content">
                 <div class="two-col">
                   <ha-selector
@@ -1611,7 +2365,12 @@ if (!customElements.get(EDITOR_TAG)) {
                     @value-changed=${(e) => this._updateIntervalField(idx, "to", Number(e.detail.value))}
                   ></ha-selector>
                 </div>
-                <div class="three-col">
+                ${this._renderIntervalThemeToggles(
+                  interval,
+                  (checked) => this._updateIntervalField(idx, "override_theme_colors", checked),
+                  (checked) => this._updateIntervalField(idx, "override_theme_text_color", checked)
+                )}
+                <div class="four-col">
                   <div class="color-row">
                     <input type="color" class="color-swatch"
                       .value=${interval.color_from || "#000000"}
@@ -1648,6 +2407,7 @@ if (!customElements.get(EDITOR_TAG)) {
                       @value-changed=${(e) => this._updateIntervalField(idx, "text_color", e.detail.value)}
                     ></ha-selector>
                   </div>
+                  ${this._renderShadowColorControl(interval, "shadow_color", "Active shadow color", interval.color_from || "#FF9800")}
                 </div>
                 <ha-selector .hass=${this.hass} .label=${"Match state (optional, e.g. on, off)"}
                   .value=${interval.match_state || ""}
@@ -1669,6 +2429,7 @@ if (!customElements.get(EDITOR_TAG)) {
                 <div class="helper-text">Variables: &lt;state&gt; &lt;unit&gt; &lt;dimmer_pct&gt; &lt;source&gt; &lt;title&gt; &lt;artist&gt; &lt;album&gt; &lt;title_artist&gt;</div>
                 <div class="action-row">
                   <ha-button class="danger" @click=${() => {
+                    if (!this._confirmDelete(`global color interval ${idx + 1}`)) return;
                     this._config.color_intervals.splice(idx, 1);
                     this.requestUpdate(); this._emitConfigChanged();
                   }}>Delete interval</ha-button>
@@ -1683,63 +2444,488 @@ if (!customElements.get(EDITOR_TAG)) {
                 from: 0, to: 10,
                 color_from: "#1E88E5", color_to: "#1E88E5",
                 text_color: "#FFFFFF",
+                shadow_color: "",
+                override_theme_colors: true,
+                override_theme_text_color: true,
                 match_state: "", state_text: "", suffix_text: "",
               });
               this.requestUpdate(); this._emitConfigChanged();
             }}>Add interval</ha-button>
           </div>
-        </div>
+          </div>
+        </details>
 
-        <div class="section">
-          <div class="section-title">Rows &amp; entities</div>
-          ${rows.map((row, rowIdx) => this._renderRow(row, rowIdx))}
+        <details class="section editor-section">
+          <summary class="section-summary">${this._renderSectionTitle("mdi:view-grid-outline", "Main menu rows & buttons", `${rows.length} row${rows.length === 1 ? "" : "s"}`)}</summary>
+          <div class="section-body">
+          <div class="section-note">Each expandable item below is a live-style preview of the button you are configuring.</div>
+          ${rows.map((row, rowIdx) => this._renderRow(row, rowIdx, ""))}
           <div class="action-row">
             <ha-button @click=${() => {
               if (!this._config.rows) this._config.rows = [];
-              this._config.rows.push({ label: "", label_position: "none", entities: [] });
+              this._config.rows.push(this._newRow());
               this.requestUpdate(); this._emitConfigChanged();
             }}>Add row</ha-button>
+          </div>
+          </div>
+        </details>
+        ${this._renderMenus()}
+        <div class="support-card">
+          <div class="support-title">☕ Support the project</div>
+          <div class="support-text">
+            I’m a Home Automation enthusiast who spends late nights building custom cards and tools for Home Assistant.
+            If you enjoy my work or use any of my cards, your support helps me keep improving and maintaining everything.
+          </div>
+          <a class="support-link" href="https://www.buymeacoffee.com/AndyBonde" target="_blank"
+             rel="noopener noreferrer" aria-label="Buy me a coffee">
+            <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" width="140" alt="Buy me a coffee" />
+          </a>
+        </div>
+        </div>
+      `;
+    }
+
+    _renderSectionTitle(icon, label, meta = "") {
+      return html`
+        <span class="section-title">
+          <ha-icon .icon=${icon}></ha-icon>
+          <span class="section-title-label">${label}</span>
+          ${meta ? html`<span class="section-count">${meta}</span>` : ""}
+          <ha-icon class="section-chevron" icon="mdi:chevron-down"></ha-icon>
+        </span>
+      `;
+    }
+
+    _renderThemes() {
+      const themes = this._config.button_themes || [];
+      return html`
+        <div class="theme-manager">
+          <div class="subsection-title">Reusable button themes</div>
+          <div class="helper-text">
+            A theme can be inherited by every button, overridden for the main menu or a submenu, then per row and finally per button.
+            Priority is button → row → menu → global. Select “No theme” at any override level to use Color intervals or Custom colors instead.
+          </div>
+          <div class="two-col">
+            ${this._renderSelect("Global default theme", this._config.default_theme_id || "",
+              this._themeOptions("global"),
+              (value) => { this._config.default_theme_id = value || ""; this._emitConfigChanged(); }
+            )}
+            ${this._renderSelect("Main menu theme override", this._config.main_menu_theme_id || "",
+              this._themeOptions("override"),
+              (value) => { this._config.main_menu_theme_id = value || ""; this._emitConfigChanged(); }
+            )}
+          </div>
+          <div class="theme-list">
+            ${themes.map((theme, themeIdx) => this._renderThemeEditor(theme, themeIdx))}
+          </div>
+          <div class="action-row">
+            <ha-button @click=${() => {
+              if (!Array.isArray(this._config.button_themes)) this._config.button_themes = [];
+              this._config.button_themes.push(this._newTheme());
+              this.requestUpdate();
+              this._emitConfigChanged();
+            }}>Add theme</ha-button>
           </div>
         </div>
       `;
     }
 
-    _renderRow(row, rowIdx) {
-      const rows = this._config.rows || [];
+    _renderThemeEditor(theme, themeIdx) {
+      const themes = this._config.button_themes || [];
+      const usage = this._themeUsage(theme.id);
+      const themeStrengthInherited = theme.shadow_strength === null || theme.shadow_strength === undefined || String(theme.shadow_strength).trim() === "";
+      const effectiveThemeStrength = this._resolveShadowStrength(
+        theme.shadow_strength,
+        this._config.box_style?.shadow_strength,
+        60
+      );
+      return html`
+        <ha-expansion-panel class="theme-editor-panel color-preview-panel"
+          style=${this._editorPanelColorStyle(theme, "#1565C0", "#FFFFFF")}>
+          <div slot="header" class="color-preview-header theme-preview-header">
+            <ha-icon icon="mdi:palette"></ha-icon>
+            <span>${theme.name || theme.id} — used by ${usage.length}</span>
+          </div>
+          <div class="expansion-content">
+            <div class="three-col">
+              <ha-selector .hass=${this.hass} .label=${"Theme name"}
+                .value=${theme.name || ""} .selector=${{text: {}}}
+                @value-changed=${(e) => { theme.name = e.detail.value; this._emitConfigChanged(); }}></ha-selector>
+              <ha-selector .hass=${this.hass} .label=${"Theme ID"}
+                .value=${theme.id || ""} .selector=${{text: {}}}
+                @value-changed=${(e) => this._renameTheme(themeIdx, e.detail.value)}></ha-selector>
+            </div>
+            <div class="three-col">
+              ${this._renderThemeColor(theme, "color_from", "Gradient from", "#1565C0")}
+              ${this._renderThemeColor(theme, "color_to", "Gradient to", "#1E88E5")}
+              ${this._renderThemeColor(theme, "text_color", "Text color", "#FFFFFF")}
+            </div>
+            <div class="three-col">
+              <ha-selector .hass=${this.hass} .label=${"Border radius (px)"}
+                .value=${theme.border_radius ?? 18}
+                .selector=${{number: {min: 0, step: 1, mode: "box"}}}
+                @value-changed=${(e) => { theme.border_radius = Number(e.detail.value); this._emitConfigChanged(); }}></ha-selector>
+              <ha-selector .hass=${this.hass} .label=${"Border width (px)"}
+                .value=${theme.border_width ?? 0}
+                .selector=${{number: {min: 0, step: 1, mode: "box"}}}
+                @value-changed=${(e) => { theme.border_width = Number(e.detail.value); this._emitConfigChanged(); }}></ha-selector>
+              ${this._renderThemeColor(theme, "border_color", "Border color", "#FFFFFF")}
+            </div>
+            <div class="four-col">
+              ${this._renderSelect("Box shadow", this._shadowPresetFromCss(theme.box_shadow),
+                [["none","None"],["soft","Soft"],["medium","Medium"],["strong","Strong"],["glow","Glow"]],
+                (value) => { theme.box_shadow = this._shadowCssFromPreset(value || "medium"); this._emitConfigChanged(); }
+              )}
+              <ha-selector .hass=${this.hass} .label=${themeStrengthInherited ? "Shadow strength (%) — inherited" : "Shadow strength (%)"}
+                .value=${effectiveThemeStrength}
+                .selector=${{number: {min: 0, max: 100, step: 5, mode: "box"}}}
+                @value-changed=${(e) => {
+                  const raw = e.detail.value;
+                  if (raw === "" || raw === null || raw === undefined) delete theme.shadow_strength;
+                  else theme.shadow_strength = Number(raw);
+                  this._emitConfigChanged();
+                }}></ha-selector>
+              ${this._renderSelect("Shadow color source", theme.shadow_color_mode || "inherit",
+                [["inherit","Inherit global"],["ha","Home Assistant theme color"],["active","Theme / active interval color"],["custom","Custom color"],["default","Classic black"]],
+                (value) => { theme.shadow_color_mode = value || "inherit"; this.requestUpdate(); this._emitConfigChanged(); }
+              )}
+              ${this._renderSelect("Badge style", theme.badge_style || "inherit",
+                [["inherit","Inherit global"],["pill","Pill"],["pill-strong","Pill strong"],["chip","Chip"],["underline","Underline"],["none","None"]],
+                (value) => { theme.badge_style = value || "inherit"; this._emitConfigChanged(); }
+              )}
+            </div>
+            ${theme.shadow_color_mode === "custom"
+              ? this._renderShadowColorControl(theme, "shadow_color", "Theme shadow color", "#FF9800")
+              : ""}
+            <div class="theme-usage"><b>Used by:</b> ${usage.length ? usage.join(" · ") : "Not currently assigned"}</div>
+            <div class="action-row">
+              <ha-button class="danger" @click=${() => {
+                const currentUsage = this._themeUsage(theme.id);
+                if (!this._confirmDelete(`theme “${theme.name || theme.id}”`,
+                  currentUsage.length ? `It is currently used by: ${currentUsage.join(", ")}. Those locations will return to inherited/button colors.` : "")) return;
+                this._clearThemeReferences(theme.id);
+                themes.splice(themeIdx, 1);
+                this.requestUpdate();
+                this._emitConfigChanged();
+              }}>Delete theme</ha-button>
+            </div>
+          </div>
+        </ha-expansion-panel>
+      `;
+    }
+
+    _renderThemeColor(theme, field, label, fallback) {
+      return html`
+        <div class="color-row">
+          <input type="color" class="color-swatch" .value=${theme[field] || fallback}
+            @input=${(e) => { theme[field] = e.target.value; this.requestUpdate(); this._emitConfigChanged(); }}
+            @click=${this._stopPropagation} />
+          <ha-selector .hass=${this.hass} .label=${label}
+            .value=${theme[field] || ""} .selector=${{text: {}}}
+            @value-changed=${(e) => { theme[field] = e.detail.value; this._emitConfigChanged(); }}></ha-selector>
+        </div>
+      `;
+    }
+
+    _editorPanelColorStyle(source, fallbackFrom = "#1E88E5", fallbackText = "#FFFFFF") {
+      const from = source?.color_from || fallbackFrom;
+      const to = source?.color_to || from;
+      const textColor = source?.text_color || fallbackText;
+      return `--panel-preview-from:${from};--panel-preview-to:${to};--panel-preview-text:${textColor};`;
+    }
+
+    _renderShadowColorControl(target, field, label, fallback = "#FF9800") {
+      return html`
+        <div class="color-row shadow-color-control">
+          <input type="color" class="color-swatch" .value=${target[field] || fallback}
+            @input=${(e) => { target[field] = e.target.value; this.requestUpdate(); this._emitConfigChanged(); }}
+            @click=${this._stopPropagation} />
+          <ha-selector .hass=${this.hass} .label=${label}
+            .value=${target[field] || ""} .selector=${{text: {}}}
+            @value-changed=${(e) => { target[field] = e.detail.value; this.requestUpdate(); this._emitConfigChanged(); }}></ha-selector>
+        </div>
+      `;
+    }
+
+    _isIntervalOverrideEnabled(interval, field) {
+      const value = interval?.[field];
+      if (value !== undefined && value !== null) return value !== false && value !== "false";
+      const legacyValue = interval?.override_theme;
+      if (legacyValue !== undefined && legacyValue !== null) return legacyValue !== false && legacyValue !== "false";
+      return true;
+    }
+
+    _renderIntervalThemeToggles(interval, onButtonColorsChange, onTextColorChange) {
+      const buttonColorsEnabled = this._isIntervalOverrideEnabled(interval, "override_theme_colors");
+      const textColorEnabled = this._isIntervalOverrideEnabled(interval, "override_theme_text_color");
+      return html`
+        <div class="interval-theme-overrides">
+          <div class="interval-theme-context">
+            <ha-icon icon="mdi:palette-outline"></ha-icon>
+            <div><b>Override active theme</b><span>These switches only have an effect when the button has an active reusable theme. Without a theme, the interval already controls its colors normally.</span></div>
+          </div>
+          <div class="toggle-row compact-toggle interval-theme-toggle">
+            <span class="picker-label">Button color</span>
+            <ha-switch .checked=${buttonColorsEnabled}
+              @change=${(e) => onButtonColorsChange(e.target.checked)}></ha-switch>
+          </div>
+          <div class="toggle-row compact-toggle interval-theme-toggle">
+            <span class="picker-label">Text color</span>
+            <ha-switch .checked=${textColorEnabled}
+              @change=${(e) => onTextColorChange(e.target.checked)}></ha-switch>
+          </div>
+        </div>
+      `;
+    }
+
+    _renderMenus() {
+      const menus = this._config.menus || [];
+      const grouped = new Map();
+      menus.forEach((menu, menuIdx) => {
+        const group = String(menu.group || "").trim() || "Ungrouped";
+        if (!grouped.has(group)) grouped.set(group, []);
+        grouped.get(group).push({ menu, menuIdx });
+      });
+      return html`
+        <details class="section editor-section">
+          <summary class="section-summary">${this._renderSectionTitle("mdi:folder-multiple-outline", "Menus & submenus", `${menus.length} menu${menus.length === 1 ? "" : "s"}`)}</summary>
+          <div class="section-body">
+          <div class="section-note">
+            Build reusable destination menus here, then change any button’s type to Menu button and link it to one.
+            Menus can be opened as a popup or replace the current menu. There is no fixed menu-depth limit;
+            groups, notes, the menu index and usage references help keep larger structures manageable.
+          </div>
+          <details class="menu-help-details">
+            <summary><ha-icon icon="mdi:help-circle-outline"></ha-icon><span>Setup guide &amp; menu help</span><small>Show instructions</small><ha-icon class="help-chevron" icon="mdi:chevron-down"></ha-icon></summary>
+            <div class="menu-guide">
+              <div class="menu-guide-title"><ha-icon icon="mdi:information-outline"></ha-icon> Quick setup</div>
+              <ol>
+              <li><b>Create the destination:</b> Select <b>Add menu</b>, give it a title, then add rows and the buttons that should appear inside it.</li>
+              <li><b>Choose the opening button:</b> Under <b>Main menu rows &amp; buttons</b>, open a button preview and change <b>Button type</b> to <b>Menu button</b>.</li>
+              <li><b>Link it:</b> Select your new menu under <b>Destination</b>.</li>
+              <li><b>Choose how it opens:</b> <b>Replace current menu</b> changes the contents inside the card; <b>Popup</b> opens the menu above the dashboard.</li>
+              <li><b>Navigation controls:</b> <b>Back</b> is optional. <b>Close</b> is always shown for popups so they can never trap navigation; for an in-place menu it remains optional.</li>
+              <li><b>After an entity tap:</b> Set the menuâ€™s <b>Action after tap</b> to stay, return one step or close the complete menu flow.</li>
+              </ol>
+              <div class="menu-guide-tip">
+                <b>More navigation:</b> A Menu button can also target <b>Previous menu (Back)</b>, <b>Main menu</b>, or any other existing menu.
+                Menu buttons support the same badges and color intervals as entity buttons. Automatic status shows active/total and uses the active count for its color interval;
+                alternatively select a status entity or use Custom colors.
+              </div>
+            </div>
+          </details>
+          ${menus.length ? html`
+            <div class="menu-index">
+              <div class="menu-index-title"><ha-icon icon="mdi:link-variant"></ha-icon> Menu index</div>
+              <div class="menu-quicklinks">
+                ${menus.map((menu) => html`
+                  <button type="button" title=${`Open ${menu.title || menu.id} · used by ${this._menuUsage(menu.id).length} button(s)`}
+                    @click=${() => this._scrollToMenuEditor(menu.id)}>
+                    <ha-icon icon="mdi:menu"></ha-icon>
+                    <span>${menu.title || menu.id}</span>
+                    <small>${this._menuUsage(menu.id).length}</small>
+                  </button>
+                `)}
+              </div>
+            </div>
+          ` : ""}
+          ${Array.from(grouped.entries()).map(([group, entries]) => html`
+            <div class="menu-group">
+              <div class="menu-group-title"><ha-icon icon="mdi:folder-outline"></ha-icon>${group}<span>${entries.length}</span></div>
+              ${entries.map(({ menu, menuIdx }) => this._renderMenuEditor(menu, menuIdx))}
+            </div>
+          `)}
+          <div class="action-row">
+            <ha-button @click=${() => {
+              if (!Array.isArray(this._config.menus)) this._config.menus = [];
+              const id = this._makeMenuId();
+              this._config.menus.push({ id, title: `Menu ${this._config.menus.length + 1}`, description: "", group: "", theme_id: "", action_after_tap: "stay", rows: [] });
+              this.requestUpdate();
+              this._emitConfigChanged();
+            }}>Add menu</ha-button>
+          </div>
+          </div>
+        </details>
+      `;
+    }
+
+    _renderMenuEditor(menu, menuIdx) {
+      const menus = this._config.menus || [];
+      const title = menu.title || menu.id || `Menu ${menuIdx + 1}`;
+      const rows = menu.rows || [];
+      const usage = this._menuUsage(menu.id);
+      const headerBase = menu.description
+        ? `${title} — ${menu.description} (${menu.id})`
+        : `${title} — ${menu.id}`;
+      const header = `${headerBase} · ${rows.length} row${rows.length === 1 ? "" : "s"}`;
+      return html`
+        <ha-expansion-panel id=${`menu-editor-${this._scopeKey(menu.id)}`} class="menu-editor-panel" .header=${header}>
+          <div class="expansion-content menu-editor-content">
+            <div class="two-col">
+              <ha-selector .hass=${this.hass} .label=${"Menu title"}
+                .value=${menu.title || ""}
+                .selector=${{text: {}}}
+                @value-changed=${(e) => {
+                  menus[menuIdx].title = e.detail.value;
+                  this._emitConfigChanged();
+                }}
+              ></ha-selector>
+              <ha-selector .hass=${this.hass} .label=${"Menu ID"}
+                .value=${menu.id || ""}
+                .selector=${{text: {}}}
+                @value-changed=${(e) => this._renameMenu(menuIdx, e.detail.value)}
+              ></ha-selector>
+            </div>
+            <div class="four-col">
+              ${this._renderSelect("Choose existing group", menu.group || "", this._menuGroupOptions(),
+                (value) => { menu.group = value || ""; this.requestUpdate(); this._emitConfigChanged(); }
+              )}
+              <ha-selector .hass=${this.hass} .label=${"Group name (type new or edit)"}
+                .value=${menu.group || ""} .selector=${{text: {}}}
+                @value-changed=${(e) => { menu.group = e.detail.value; this.requestUpdate(); this._emitConfigChanged(); }}></ha-selector>
+              ${this._renderSelect("Theme override", menu.theme_id || "", this._themeOptions("override"),
+                (value) => { menu.theme_id = value || ""; this._emitConfigChanged(); }
+              )}
+              ${this._renderSelect("Action after tap", menu.action_after_tap || "stay",
+                [["stay","Stay in current menu"],["back","Go back one menu"],["close","Close menu / popup"]],
+                (value) => { menu.action_after_tap = value || "stay"; this._emitConfigChanged(); }
+              )}
+            </div>
+            <ha-selector .hass=${this.hass} .label=${"Editor note / description"}
+              .value=${menu.description || ""} .selector=${{text: {multiline: true}}}
+              @value-changed=${(e) => { menu.description = e.detail.value; this._emitConfigChanged(); }}></ha-selector>
+            <div class="helper-text">Action after tap runs after ordinary entity buttons in this menu. Navigation buttons keep their own destination behavior.</div>
+            <div class="helper-text">The description is shown in this menu’s collapsed header. The Menu ID is used by menu buttons; renaming it updates existing links automatically.</div>
+            <div class="menu-usage-box">
+              <div class="menu-usage-title"><ha-icon icon="mdi:source-branch"></ha-icon> Used by ${usage.length} button${usage.length === 1 ? "" : "s"}</div>
+              ${usage.length
+                ? html`<div class="menu-usage-links">${usage.map((item) => html`<span>${item}</span>`)}</div>`
+                : html`<div class="inline-note">No button currently links to this menu.</div>`}
+            </div>
+            ${rows.map((row, rowIdx) => this._renderRow(row, rowIdx, menu.id))}
+            <div class="action-row">
+              <ha-button @click=${() => {
+                if (!Array.isArray(menus[menuIdx].rows)) menus[menuIdx].rows = [];
+                menus[menuIdx].rows.push(this._newRow());
+                this.requestUpdate();
+                this._emitConfigChanged();
+              }}>Add row</ha-button>
+              <ha-button class="danger" @click=${() => {
+                const deletedId = menus[menuIdx].id;
+                const usageCount = this._menuUsage(deletedId).length;
+                if (!this._confirmDelete(`menu “${menus[menuIdx].title || deletedId}”`,
+                  `${(menus[menuIdx].rows || []).length} row(s) will be removed.${usageCount ? ` ${usageCount} linked button(s) will lose their destination.` : ""}`)) return;
+                menus.splice(menuIdx, 1);
+                this._walkEntities((entity) => {
+                  if (entity.menu_target === deletedId) entity.menu_target = "";
+                });
+                this.requestUpdate();
+                this._emitConfigChanged();
+              }}>Delete menu</ha-button>
+            </div>
+          </div>
+        </ha-expansion-panel>
+      `;
+    }
+
+    _menuUsage(menuId) {
+      const usage = [];
+      const scan = (rows, location) => (rows || []).forEach((row, rowIdx) =>
+        (row.entities || []).forEach((entity, entIdx) => {
+          if (entity.button_type === "menu" && entity.menu_target === menuId) {
+            usage.push(`${location} · Row ${rowIdx + 1} · ${entity.name || `Button ${entIdx + 1}`}`);
+          }
+        })
+      );
+      scan(this._config.rows, "Main menu");
+      (this._config.menus || []).forEach((menu) => scan(menu.rows, menu.title || menu.id));
+      return usage;
+    }
+
+    _scrollToMenuEditor(menuId) {
+      const panel = this.renderRoot?.querySelector?.(`#menu-editor-${this._scopeKey(menuId)}`);
+      if (!panel) return;
+      try {
+        panel.expanded = true;
+        panel.setAttribute("expanded", "");
+        panel.scrollIntoView({ behavior: "smooth", block: "start" });
+      } catch (_) {}
+    }
+
+    _walkRows(callback) {
+      (this._config.rows || []).forEach((row) => callback(row, ""));
+      (this._config.menus || []).forEach((menu) =>
+        (menu.rows || []).forEach((row) => callback(row, menu.id))
+      );
+    }
+
+    _walkEntities(callback) {
+      const visitRows = (rows) => (rows || []).forEach((row) =>
+        (row.entities || []).forEach((entity) => callback(entity))
+      );
+      visitRows(this._config.rows);
+      (this._config.menus || []).forEach((menu) => visitRows(menu.rows));
+    }
+
+    _renameMenu(menuIdx, requestedId) {
+      const menus = this._config.menus || [];
+      const menu = menus[menuIdx];
+      if (!menu) return;
+      const oldId = menu.id;
+      const cleaned = String(requestedId || "")
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]+/g, "_")
+        .replace(/^_+|_+$/g, "");
+      if (!cleaned || menus.some((item, idx) => idx !== menuIdx && item.id === cleaned)) {
+        this.requestUpdate();
+        return;
+      }
+      menu.id = cleaned;
+      this._walkEntities((entity) => {
+        if (entity.menu_target === oldId) entity.menu_target = cleaned;
+      });
+      this.requestUpdate();
+      this._emitConfigChanged();
+    }
+
+    _renderRow(row, rowIdx, menuId = "") {
+      const rows = this._rowsForScope(menuId);
       const entities = row.entities || [];
-      const header = row.label ? `Row ${rowIdx + 1} — ${row.label}` : `Row ${rowIdx + 1}`;
+      const rowName = row.label ? `Row ${rowIdx + 1} — ${row.label}` : `Row ${rowIdx + 1}`;
+      const header = `${rowName} · ${entities.length} button${entities.length === 1 ? "" : "s"}`;
 
       return html`
-        <ha-expansion-panel .header=${header}>
+        <ha-expansion-panel class="row-editor-panel" .header=${header}>
           <div class="expansion-content">
-            <div class="two-col">
+            <div class="three-col">
               <ha-selector .hass=${this.hass} .label=${"Row label"}
                 .value=${row.label || ""}
                 .selector=${{text: {}}}
                 @value-changed=${(e) => {
-                  this._config.rows[rowIdx].label = e.detail.value;
+                  row.label = e.detail.value;
                   this._emitConfigChanged();
                 }}
               ></ha-selector>
               ${this._renderSelect("Label position", row.label_position || "none",
                 [["none","None"],["top-left","Top left"],["top-center","Top center"],["top-right","Top right"],
                  ["bottom-left","Bottom left"],["bottom-center","Bottom center"],["bottom-right","Bottom right"]],
-                (value) => this._onLabelPosChanged(rowIdx, value)
+                (value) => this._onLabelPosChanged(rowIdx, value, menuId)
+              )}
+              ${this._renderSelect("Row theme override", row.theme_id || "", this._themeOptions("override"),
+                (value) => { row.theme_id = value || ""; this.requestUpdate(); this._emitConfigChanged(); }
               )}
             </div>
 
-            ${entities.map((ent, entIdx) => this._renderEntity(rowIdx, ent, entIdx))}
+            <div class="row-buttons-label">Buttons in this row</div>
+            ${entities.map((ent, entIdx) => this._renderEntity(rowIdx, ent, entIdx, menuId))}
 
             <div class="action-row">
               <ha-button @click=${() => {
-                if (!this._config.rows[rowIdx].entities) this._config.rows[rowIdx].entities = [];
-                this._config.rows[rowIdx].entities.push({
-                  entity: "", icon: "", icon_mode: "single", icon_states: [],
-                  name: "", value_font_size: 1.0, label_font_size: 1.0,
-                  color_mode: "interval", color_from: "", color_to: "", badges: [],
-                });
+                if (!row.entities) row.entities = [];
+                row.entities.push(this._newEntity());
                 this.requestUpdate(); this._emitConfigChanged();
-              }}>Add entity</ha-button>
+              }}>Add button</ha-button>
               ${rowIdx > 0 ? html`<ha-button @click=${() => {
                 [rows[rowIdx - 1], rows[rowIdx]] = [rows[rowIdx], rows[rowIdx - 1]];
                 this.requestUpdate(); this._emitConfigChanged();
@@ -1749,6 +2935,7 @@ if (!customElements.get(EDITOR_TAG)) {
                 this.requestUpdate(); this._emitConfigChanged();
               }}>Move down</ha-button>` : ""}
               <ha-button class="danger" @click=${() => {
+                if (!this._confirmDelete(`row ${rowIdx + 1}`, `${entities.length} button(s) will also be removed.`)) return;
                 rows.splice(rowIdx, 1);
                 this.requestUpdate(); this._emitConfigChanged();
               }}>Delete row</ha-button>
@@ -1758,29 +2945,340 @@ if (!customElements.get(EDITOR_TAG)) {
       `;
     }
 
-    _onLabelPosChanged(rowIdx, e) {
+    _onLabelPosChanged(rowIdx, e, menuId = "") {
       const value = typeof e === "string" ? e : this._selectValue(e, "none") || "none";
-      this._config.rows[rowIdx].label_position = value;
+      const row = this._rowsForScope(menuId)[rowIdx];
+      if (row) row.label_position = value;
       this._emitConfigChanged();
     }
 
-    _renderEntity(rowIdx, ent, entIdx) {
-      const entities = this._config.rows[rowIdx].entities;
+    _menuTargetOptions() {
+      return [
+        ["", "Select a destination"],
+        ["__back__", "Previous menu (Back)"],
+        ["__root__", "Main menu"],
+        ...(this._config.menus || []).map((menu) => [
+          menu.id,
+          menu.group ? `${menu.group} · ${menu.title || menu.id}` : (menu.title || menu.id),
+        ]),
+      ];
+    }
+
+    _menuGroupOptions() {
+      const groups = Array.from(new Set(
+        (this._config.menus || []).map((menu) => String(menu.group || "").trim()).filter(Boolean)
+      )).sort((a, b) => a.localeCompare(b));
+      return [["", "Ungrouped / type a new group"], ...groups.map((group) => [group, group])];
+    }
+
+    _renderMenuButtonSettings(ent) {
+      const targetIsMenu = ent.menu_target && !String(ent.menu_target).startsWith("__");
+      const stateMode = ent.menu_state_mode || (ent.entity ? "entity" : "auto");
+      const isPopup = (ent.menu_display || "replace") === "popup";
+      return html`
+        <div class="menu-settings">
+          ${this._renderSelect("Destination", ent.menu_target || "", this._menuTargetOptions(), (value) => {
+            ent.menu_target = value;
+            this._emitConfigChanged();
+          })}
+          ${targetIsMenu ? html`
+            <div class="two-col">
+              ${this._renderSelect("Open menu as", ent.menu_display || "replace",
+                [["replace", "Replace current menu"], ["popup", "Popup"]],
+                (value) => {
+                  ent.menu_display = value || "replace";
+                  if (ent.menu_display === "popup") ent.menu_show_close = true;
+                  this.requestUpdate();
+                  this._emitConfigChanged();
+                }
+              )}
+              ${this._renderSelect("Menu status", stateMode,
+                [["auto", "Automatic: active/total"], ["entity", "Use status entity"], ["none", "None (hide status)"]],
+                (value) => { ent.menu_state_mode = value || "auto"; this.requestUpdate(); this._emitConfigChanged(); }
+              )}
+            </div>
+            <div class="helper-text menu-color-help">
+              Automatic status counts active entities in the destination menu. Color intervals then use the active count.
+              Choose a status entity to base intervals on that entity instead. None hides the value completely; use a theme or Custom colors when no status exists.
+            </div>
+            <div class="two-col menu-toggle-grid">
+              <div class="toggle-row compact-toggle">
+                <span class="picker-label">Show Back button</span>
+                <ha-switch .checked=${ent.menu_show_back === true}
+                  @change=${(e) => { ent.menu_show_back = e.target.checked; this._emitConfigChanged(); }}></ha-switch>
+              </div>
+              ${isPopup ? html`
+                <div class="toggle-row compact-toggle">
+                  <span class="picker-label">Close button</span>
+                  <span class="required-control"><ha-icon icon="mdi:lock-outline"></ha-icon>Always shown</span>
+                </div>
+              ` : html`
+                <div class="toggle-row compact-toggle">
+                  <span class="picker-label">Show Close button</span>
+                  <ha-switch .checked=${ent.menu_show_close === true}
+                    @change=${(e) => { ent.menu_show_close = e.target.checked; this._emitConfigChanged(); }}></ha-switch>
+                </div>
+              `}
+            </div>
+          ` : html`
+            <div class="helper-text">Back returns one step in the current navigation history. Main menu returns directly to the first view.</div>
+          `}
+        </div>
+      `;
+    }
+
+    _editorResolveTheme(ent, menuId = "", rowCfg = null) {
+      if (ent?.theme_id === "__none__") return null;
+      let themeId = ent?.theme_id || "";
+      if (!themeId && rowCfg?.theme_id === "__none__") return null;
+      if (!themeId && rowCfg?.theme_id) themeId = rowCfg.theme_id;
+      if (!themeId) {
+        const scopeTheme = menuId
+          ? (this._config.menus || []).find((menu) => menu.id === menuId)?.theme_id
+          : this._config.main_menu_theme_id;
+        if (scopeTheme === "__none__") return null;
+        themeId = scopeTheme || this._config.default_theme_id || "";
+      }
+      return (this._config.button_themes || []).find((theme) => theme.id === themeId) || null;
+    }
+
+    _editorResolvePreviewState(ent) {
+      const entityId = ent?.entity || "";
+      if (ent?.button_type !== "menu") {
+        return {
+          stateObj: entityId ? this.hass?.states?.[entityId] : undefined,
+          menuStats: null,
+        };
+      }
+
+      const stateMode = ent.menu_state_mode || (entityId ? "entity" : "auto");
+      if (stateMode === "none") return { stateObj: undefined, menuStats: null };
+      if (stateMode === "entity" && entityId) {
+        return {
+          stateObj: this.hass?.states?.[entityId],
+          menuStats: null,
+        };
+      }
+
+      if (ent.menu_target === "__back__" || ent.menu_target === "__root__") {
+        const state = ent.menu_target === "__back__" ? "back" : "home";
+        return {
+          stateObj: {
+            entity_id: `quickboard_menu.${state}`,
+            state,
+            attributes: { unit_of_measurement: "" },
+          },
+          menuStats: null,
+        };
+      }
+
+      const menuStats = this._previewMenuStats(ent.menu_target || "");
+      return {
+        stateObj: {
+          entity_id: `quickboard_menu.${ent.menu_target || "menu"}`,
+          state: String(menuStats.active),
+          attributes: { unit_of_measurement: `/${menuStats.total}` },
+        },
+        menuStats,
+      };
+    }
+
+    _editorFindColorInterval(stateObj, ent) {
+      if (!stateObj) return null;
+      const intervals = ent?.color_intervals?.length
+        ? ent.color_intervals
+        : (this._config.color_intervals || []);
+      const rawState = String(stateObj.state ?? "");
+      const numericValue = Number(rawState);
+      const hasNumericValue = !Number.isNaN(numericValue);
+      for (const interval of intervals) {
+        if (interval.match_state) {
+          if (rawState.toLowerCase() === String(interval.match_state).toLowerCase()) return interval;
+          continue;
+        }
+        if (hasNumericValue && numericValue >= (interval.from ?? 0) && numericValue < (interval.to ?? 0)) {
+          return interval;
+        }
+      }
+      return null;
+    }
+
+    _renderButtonPreview(ent, entIdx, menuId = "", rowCfg = null) {
+      const isMenu = ent.button_type === "menu";
+      const theme = this._editorResolveTheme(ent, menuId, rowCfg);
+      const previewBadgeStyle = ent.badge_style && ent.badge_style !== "inherit"
+        ? ent.badge_style
+        : theme?.badge_style && theme.badge_style !== "inherit"
+          ? theme.badge_style
+          : (this._config.badge_style || "pill");
+      const { stateObj: previewStateObj, menuStats: previewMenuStats } = this._editorResolvePreviewState(ent);
+      const matchedPreviewInterval = this._editorFindColorInterval(previewStateObj, ent);
+      const previewInterval = matchedPreviewInterval || {};
+      const previewOverridesButtonColors = Boolean(
+        theme && matchedPreviewInterval && this._isIntervalOverrideEnabled(previewInterval, "override_theme_colors")
+      );
+      const previewOverridesTextColor = Boolean(
+        theme && matchedPreviewInterval && this._isIntervalOverrideEnabled(previewInterval, "override_theme_text_color")
+      );
+      const previewUsesThemeColors = Boolean(theme && !previewOverridesButtonColors);
+      const previewUsesThemeTextColor = Boolean(theme && !previewOverridesTextColor);
+      const from = previewUsesThemeColors
+        ? (theme.color_from || "#1E88E5")
+        : previewOverridesButtonColors
+        ? (previewInterval.color_from || "#1E88E5")
+        : ent.color_mode === "custom"
+        ? (ent.color_from || "#1E88E5")
+        : matchedPreviewInterval
+        ? (previewInterval.color_from || "#1E88E5")
+        : "#1E3C72";
+      const to = previewUsesThemeColors
+        ? (theme.color_to || from)
+        : previewOverridesButtonColors
+        ? (previewInterval.color_to || from)
+        : ent.color_mode === "custom"
+        ? (ent.color_to || from)
+        : matchedPreviewInterval
+        ? (previewInterval.color_to || from)
+        : "#2A5298";
+      const textColor = previewUsesThemeTextColor
+        ? (theme.text_color || "#FFFFFF")
+        : previewOverridesTextColor
+        ? (previewInterval.text_color || "#FFFFFF")
+        : ent.color_mode === "custom"
+        ? "#FFFFFF"
+        : matchedPreviewInterval
+        ? (previewInterval.text_color || "#FFFFFF")
+        : "#FFFFFF";
+      const buttonShadowPreset = ent.shadow_preset || "inherit";
+      const baseShadow = buttonShadowPreset !== "inherit"
+        ? this._shadowCssFromPreset(buttonShadowPreset)
+        : (theme?.box_shadow || this._config.box_style?.box_shadow || "0 4px 12px rgba(0,0,0,.25)");
+      let shadowMode = ent.shadow_color_mode || "inherit";
+      let shadowCustom = ent.shadow_color || "";
+      if (shadowMode === "inherit" && theme?.shadow_color_mode && theme.shadow_color_mode !== "inherit") {
+        shadowMode = theme.shadow_color_mode;
+        shadowCustom = theme.shadow_color || "";
+      }
+      const previewStrength = this._resolveShadowStrength(
+        ent.shadow_strength,
+        theme?.shadow_strength,
+        this._config.box_style?.shadow_strength,
+        60
+      );
+      const previewShadow = this._previewShadowCss(
+        baseShadow,
+        shadowMode,
+        shadowCustom,
+        ((!theme || previewOverridesButtonColors) && matchedPreviewInterval ? previewInterval.shadow_color : "") || from,
+        previewStrength
+      );
+      const name = ent.name || (isMenu ? "Menu button" : (ent.entity || `Button ${entIdx + 1}`));
+      const subtitle = isMenu
+        ? (ent.menu_target === "__back__" ? "Previous menu"
+          : ent.menu_target === "__root__" ? "Main menu"
+          : ((this._config.menus || []).find((menu) => menu.id === ent.menu_target)?.title || ent.menu_target || "Choose destination"))
+        : (ent.entity || "Choose entity");
+      const icon = ent.icon || (isMenu ? "mdi:view-grid-plus-outline" : "mdi:gesture-tap-button");
+      let previewValue = "—";
+      const menuStateMode = ent.menu_state_mode || (ent.entity ? "entity" : "auto");
+      if (isMenu && menuStateMode === "none") {
+        previewValue = "";
+      } else if (isMenu && menuStateMode === "auto") {
+        if (ent.menu_target === "__back__") previewValue = "Back";
+        else if (ent.menu_target === "__root__") previewValue = "Home";
+        else {
+          previewValue = `${previewMenuStats?.active ?? 0}/${previewMenuStats?.total ?? 0}`;
+        }
+      } else if (previewStateObj) {
+        previewValue = `${previewStateObj.state}${previewStateObj.attributes?.unit_of_measurement || ""}`;
+      }
+      const previewStyle = `--preview-from:${from};--preview-to:${to};--preview-text:${textColor};--preview-radius:${Number(theme?.border_radius ?? 12)}px;--preview-border-width:${Number(theme?.border_width || 0)}px;--preview-border:${theme?.border_color || "transparent"};--preview-shadow:${previewShadow};`;
+      return html`
+        <div class="button-preview" style=${previewStyle}>
+          <div class="button-preview-type" title=${isMenu ? "Menu button" : "Entity button"}>
+            <ha-icon .icon=${isMenu ? "mdi:menu" : "mdi:flash-outline"}></ha-icon>
+          </div>
+          <ha-icon .icon=${icon}></ha-icon>
+          <div class="button-preview-copy">
+            <div class="button-preview-name">${name}</div>
+            <div class="button-preview-subtitle">${isMenu ? "Menu" : "Entity"} · ${subtitle}</div>
+            ${ent.badges?.length ? html`
+              <div class=${`button-preview-badges preview-badge-${previewBadgeStyle}`}>
+                ${ent.badges.slice(0, 3).map((badge) => html`<span>${badge.label || badge.entity || "Badge"}</span>`)}
+                ${ent.badges.length > 3 ? html`<span>+${ent.badges.length - 3}</span>` : ""}
+              </div>
+            ` : ""}
+          </div>
+          ${previewValue ? html`<div class="button-preview-value">${previewValue}</div>` : ""}
+          <ha-icon class="preview-chevron" icon="mdi:chevron-down"></ha-icon>
+        </div>
+      `;
+    }
+
+    _previewMenuStats(menuId, visited = new Set(), counted = new Set()) {
+      if (!menuId || String(menuId).startsWith("__") || visited.has(menuId)) return { active: 0, total: 0 };
+      visited.add(menuId);
+      const menu = (this._config.menus || []).find((item) => item.id === menuId);
+      let active = 0;
+      let total = 0;
+      (menu?.rows || []).forEach((row) => (row.entities || []).forEach((item) => {
+        if (item.button_type === "menu" && item.menu_target && !String(item.menu_target).startsWith("__")) {
+          const nested = this._previewMenuStats(item.menu_target, visited, counted);
+          active += nested.active;
+          total += nested.total;
+          return;
+        }
+        if (!item.entity || counted.has(item.entity) || !this.hass?.states?.[item.entity]) return;
+        counted.add(item.entity);
+        total += 1;
+        const state = String(this.hass.states[item.entity].state ?? "").trim().toLowerCase();
+        if (!["", "0", "off", "closed", "idle", "standby", "unavailable", "unknown", "disarmed"].includes(state)) active += 1;
+      }));
+      return { active, total };
+    }
+
+    _renderEntity(rowIdx, ent, entIdx, menuId = "") {
+      const entities = this._rowsForScope(menuId)[rowIdx].entities;
       const badges = ent.badges || [];
       const colorMode = ent.color_mode || "interval";
-      const header = ent.name || ent.entity || `Entity ${entIdx + 1}`;
+      const scopeKey = this._scopeKey(menuId);
+      const isMenu = ent.button_type === "menu";
+      const rowCfg = this._rowsForScope(menuId)[rowIdx];
+      const activeTheme = this._editorResolveTheme(ent, menuId, rowCfg);
+      const buttonStrengthInherited = ent.shadow_strength === null || ent.shadow_strength === undefined || String(ent.shadow_strength).trim() === "";
+      const effectiveButtonStrength = this._resolveShadowStrength(
+        ent.shadow_strength,
+        activeTheme?.shadow_strength,
+        this._config.box_style?.shadow_strength,
+        60
+      );
 
       return html`
-        <ha-expansion-panel .header=${header}>
+        <details class="button-details">
+          <summary>${this._renderButtonPreview(ent, entIdx, menuId, rowCfg)}</summary>
           <div class="expansion-content">
-            <div class="picker-label">Entity</div>
-            <div class="entity-picker-placeholder" id=${`entity-picker-${rowIdx}-${entIdx}`}></div>
+            ${this._renderSelect("Button type", isMenu ? "menu" : "entity",
+              [["entity", "Entity button"], ["menu", "Menu button"]],
+              (value) => {
+                ent.button_type = value || "entity";
+                if (ent.button_type === "menu" && !ent.menu_target) ent.menu_target = this._config.menus?.[0]?.id || "";
+                this.requestUpdate();
+                this._emitConfigChanged();
+              }
+            )}
+
+            ${isMenu ? this._renderMenuButtonSettings(ent) : ""}
+
+            ${!isMenu || (ent.menu_state_mode || (ent.entity ? "entity" : "auto")) === "entity" ? html`
+              <div class="picker-label">${isMenu ? "Status entity (optional)" : "Entity"}</div>
+              <div class="entity-picker-placeholder" id=${`entity-picker-${scopeKey}-${rowIdx}-${entIdx}`}></div>
+            ` : ""}
 
             <ha-selector .hass=${this.hass} .label=${"Name"}
               .value=${ent.name || ""}
               .selector=${{text: {}}}
               @value-changed=${(e) => {
-                this._config.rows[rowIdx].entities[entIdx].name = e.detail.value;
+                ent.name = e.detail.value;
                 this._emitConfigChanged();
               }}
             ></ha-selector>
@@ -1789,14 +3287,14 @@ if (!customElements.get(EDITOR_TAG)) {
               ${this._renderSelect("Icon mode", ent.icon_mode || "single",
                 [["single","Single icon"],["state","By state"]],
                 (v) => {
-                  this._config.rows[rowIdx].entities[entIdx].icon_mode = v || "single";
+                  ent.icon_mode = v || "single";
                   this._emitConfigChanged();
                 }
               )}
               ${(ent.icon_mode || "single") === "single" ? html`
                 <ha-icon-picker label="Icon" .hass=${this.hass} .value=${ent.icon || ""}
                   @value-changed=${(e) => {
-                    this._config.rows[rowIdx].entities[entIdx].icon = e.detail.value;
+                    ent.icon = e.detail.value;
                     this._emitConfigChanged();
                   }}
                   @closed=${this._stopPropagation}
@@ -1812,13 +3310,13 @@ if (!customElements.get(EDITOR_TAG)) {
                       .value=${m.state || ""}
                       .selector=${{text: {}}}
                       @value-changed=${(e) => {
-                        this._config.rows[rowIdx].entities[entIdx].icon_states[mIdx].state = e.detail.value;
+                        ent.icon_states[mIdx].state = e.detail.value;
                         this._emitConfigChanged();
                       }}
                     ></ha-selector>
                     <ha-icon-picker label="Icon" .hass=${this.hass} .value=${m.icon || ""}
                       @value-changed=${(e) => {
-                        this._config.rows[rowIdx].entities[entIdx].icon_states[mIdx].icon = e.detail.value;
+                        ent.icon_states[mIdx].icon = e.detail.value;
                         this._emitConfigChanged();
                       }}
                       @closed=${this._stopPropagation}
@@ -1826,16 +3324,16 @@ if (!customElements.get(EDITOR_TAG)) {
                   </div>
                   <div class="action-row">
                     <ha-button class="danger" @click=${() => {
-                      this._config.rows[rowIdx].entities[entIdx].icon_states.splice(mIdx, 1);
+                      if (!this._confirmDelete(`state icon “${m.state || mIdx + 1}”`)) return;
+                      ent.icon_states.splice(mIdx, 1);
                       this.requestUpdate(); this._emitConfigChanged();
                     }}>Remove</ha-button>
                   </div>
                 `)}
                 <div class="action-row">
                   <ha-button @click=${() => {
-                    if (!this._config.rows[rowIdx].entities[entIdx].icon_states)
-                      this._config.rows[rowIdx].entities[entIdx].icon_states = [];
-                    this._config.rows[rowIdx].entities[entIdx].icon_states.push({ state: "", icon: "" });
+                    if (!ent.icon_states) ent.icon_states = [];
+                    ent.icon_states.push({ state: "", icon: "" });
                     this.requestUpdate(); this._emitConfigChanged();
                   }}>Add state icon</ha-button>
                 </div>
@@ -1848,7 +3346,7 @@ if (!customElements.get(EDITOR_TAG)) {
                 @change=${(e) => {
                   const globalDefault = this._config.show_icon !== false;
                   const newValue = e.target.checked;
-                  this._config.rows[rowIdx].entities[entIdx].show_icon = newValue === globalDefault ? undefined : newValue;
+                  ent.show_icon = newValue === globalDefault ? undefined : newValue;
                   this._emitConfigChanged();
                 }}
               ></ha-switch>
@@ -1859,7 +3357,7 @@ if (!customElements.get(EDITOR_TAG)) {
                 .value=${ent.value_font_size ?? 1.0}
                 .selector=${{number: {min: 0.1, step: 0.1, mode: "box"}}}
                 @value-changed=${(e) => {
-                  this._config.rows[rowIdx].entities[entIdx].value_font_size = Number(e.detail.value);
+                  ent.value_font_size = Number(e.detail.value);
                   this._emitConfigChanged();
                 }}
               ></ha-selector>
@@ -1867,7 +3365,7 @@ if (!customElements.get(EDITOR_TAG)) {
                 .value=${ent.label_font_size ?? 1.0}
                 .selector=${{number: {min: 0.1, step: 0.1, mode: "box"}}}
                 @value-changed=${(e) => {
-                  this._config.rows[rowIdx].entities[entIdx].label_font_size = Number(e.detail.value);
+                  ent.label_font_size = Number(e.detail.value);
                   this._emitConfigChanged();
                 }}
               ></ha-selector>
@@ -1878,8 +3376,7 @@ if (!customElements.get(EDITOR_TAG)) {
                 .selector=${{number: {min: 0, max: 6, step: 1, mode: "box"}}}
                 @value-changed=${(e) => {
                   const raw = e.detail.value;
-                  this._config.rows[rowIdx].entities[entIdx].decimal_places =
-                    raw === "" || raw === null || raw === undefined ? undefined : Number(raw);
+                  ent.decimal_places = raw === "" || raw === null || raw === undefined ? undefined : Number(raw);
                   this._emitConfigChanged();
                 }}
               ></ha-selector>
@@ -1888,16 +3385,52 @@ if (!customElements.get(EDITOR_TAG)) {
                 .selector=${{text: {}}}
                 @value-changed=${(e) => {
                   const raw = e.detail.value;
-                  this._config.rows[rowIdx].entities[entIdx].unit = raw === "" ? undefined : raw;
+                  ent.unit = raw === "" ? undefined : raw;
                   this._emitConfigChanged();
                 }}
               ></ha-selector>
             </div>
 
+            ${this._renderSelect("Theme override", ent.theme_id || "", this._themeOptions("override"),
+              (value) => { ent.theme_id = value || ""; this.requestUpdate(); this._emitConfigChanged(); }
+            )}
+            ${activeTheme ? html`
+              <div class="theme-active-note"><ha-icon icon="mdi:palette"></ha-icon>
+                Active theme: <b>${activeTheme.name || activeTheme.id}</b>. It overrides the color source below; select “No theme” to use intervals or custom colors for this button.
+              </div>
+            ` : ""}
+
+            <div class="subsection-title">Shadow</div>
+            <div class="three-col">
+              ${this._renderSelect("Shadow type", ent.shadow_preset || "inherit",
+                [["inherit","Inherit theme/global"],["none","None"],["soft","Soft"],["medium","Medium"],["strong","Strong"],["glow","Glow"]],
+                (value) => { ent.shadow_preset = value || "inherit"; this._emitConfigChanged(); }
+              )}
+              <ha-selector .hass=${this.hass} .label=${buttonStrengthInherited ? "Shadow strength (%) — inherited" : "Shadow strength (%)"}
+                .value=${effectiveButtonStrength}
+                .selector=${{number: {min: 0, max: 100, step: 5, mode: "box"}}}
+                @value-changed=${(e) => {
+                  const raw = e.detail.value;
+                  if (raw === "" || raw === null || raw === undefined) delete ent.shadow_strength;
+                  else ent.shadow_strength = Number(raw);
+                  this._emitConfigChanged();
+                }}></ha-selector>
+              ${this._renderSelect("Shadow color source", ent.shadow_color_mode || "inherit",
+                [["inherit","Inherit theme/global"],["ha","Home Assistant theme color"],["active","Active theme / color interval"],["custom","Custom color"],["default","Classic black"]],
+                (value) => { ent.shadow_color_mode = value || "inherit"; this.requestUpdate(); this._emitConfigChanged(); }
+              )}
+            </div>
+            ${ent.shadow_color_mode === "custom"
+              ? this._renderShadowColorControl(ent, "shadow_color", "Button shadow color", "#FF9800")
+              : ""}
+            <div class="helper-text shadow-help">
+              “Active theme / color interval” uses the matched interval’s Active shadow color. If that field is empty, the current theme or button color is used.
+            </div>
+
             ${this._renderSelect("Color source", colorMode,
               [["interval","Color interval"],["custom","Custom colors"]],
               (v) => {
-                this._config.rows[rowIdx].entities[entIdx].color_mode = v || "interval";
+                ent.color_mode = v || "interval";
                 this._emitConfigChanged();
               }
             )}
@@ -1907,111 +3440,120 @@ if (!customElements.get(EDITOR_TAG)) {
                 <div class="color-row">
                   <input type="color" class="color-swatch"
                     .value=${ent.color_from || "#000000"}
-                    @input=${(e) => this._updateEntityColorField(rowIdx, entIdx, "color_from", e.target.value)}
+                    @input=${(e) => this._updateEntityColorField(rowIdx, entIdx, "color_from", e.target.value, menuId)}
                     @click=${this._stopPropagation}
                   />
                   <ha-selector .hass=${this.hass} .label=${"Gradient from"}
                     .value=${ent.color_from || ""}
                     .selector=${{text: {}}}
-                    @value-changed=${(e) => this._updateEntityColorField(rowIdx, entIdx, "color_from", e.detail.value)}
+                    @value-changed=${(e) => this._updateEntityColorField(rowIdx, entIdx, "color_from", e.detail.value, menuId)}
                   ></ha-selector>
                 </div>
                 <div class="color-row">
                   <input type="color" class="color-swatch"
                     .value=${ent.color_to || "#000000"}
-                    @input=${(e) => this._updateEntityColorField(rowIdx, entIdx, "color_to", e.target.value)}
+                    @input=${(e) => this._updateEntityColorField(rowIdx, entIdx, "color_to", e.target.value, menuId)}
                     @click=${this._stopPropagation}
                   />
                   <ha-selector .hass=${this.hass} .label=${"Gradient to"}
                     .value=${ent.color_to || ""}
                     .selector=${{text: {}}}
-                    @value-changed=${(e) => this._updateEntityColorField(rowIdx, entIdx, "color_to", e.detail.value)}
+                    @value-changed=${(e) => this._updateEntityColorField(rowIdx, entIdx, "color_to", e.detail.value, menuId)}
                   ></ha-selector>
                 </div>
               </div>
             ` : ""}
 
             ${colorMode === "interval" ? html`
-              <div class="subsection-title">Per-entity color intervals</div>
-              <div class="helper-text">Leave empty to use global color intervals.</div>
+              <div class="subsection-title">Per-button color intervals</div>
+              <div class="helper-text">Leave empty to use global color intervals. For an automatic menu button, From/To matches its active-entity count.</div>
               ${(ent.color_intervals || []).map((interval, iIdx) => html`
-                <ha-expansion-panel
-                  .header=${interval.match_state
-                    ? `Interval ${iIdx + 1} — state: ${interval.match_state}`
-                    : `Interval ${iIdx + 1} — ${interval.from ?? 0} to ${interval.to ?? 0}`}
-                >
+                <ha-expansion-panel class="interval-editor-panel color-preview-panel"
+                  style=${this._editorPanelColorStyle(interval, "#1E88E5", "#FFFFFF")}>
+                  <div slot="header" class="color-preview-header">
+                    <span>${interval.match_state
+                      ? `Interval ${iIdx + 1} — state: ${interval.match_state}`
+                      : `Interval ${iIdx + 1} — ${interval.from ?? 0} to ${interval.to ?? 0}`}</span>
+                  </div>
                   <div class="expansion-content">
                     <div class="two-col">
                       <ha-selector .hass=${this.hass} .label=${"From"}
                         .value=${interval.from ?? 0}
                         .selector=${{number: {step: 1, mode: "box"}}}
-                        @value-changed=${(e) => this._updateEntityIntervalField(rowIdx, entIdx, iIdx, "from", Number(e.detail.value))}
+                        @value-changed=${(e) => this._updateEntityIntervalField(rowIdx, entIdx, iIdx, "from", Number(e.detail.value), menuId)}
                       ></ha-selector>
                       <ha-selector .hass=${this.hass} .label=${"To"}
                         .value=${interval.to ?? 0}
                         .selector=${{number: {step: 1, mode: "box"}}}
-                        @value-changed=${(e) => this._updateEntityIntervalField(rowIdx, entIdx, iIdx, "to", Number(e.detail.value))}
+                        @value-changed=${(e) => this._updateEntityIntervalField(rowIdx, entIdx, iIdx, "to", Number(e.detail.value), menuId)}
                       ></ha-selector>
                     </div>
-                    <div class="three-col">
+                    ${this._renderIntervalThemeToggles(
+                      interval,
+                      (checked) => this._updateEntityIntervalField(rowIdx, entIdx, iIdx, "override_theme_colors", checked, menuId),
+                      (checked) => this._updateEntityIntervalField(rowIdx, entIdx, iIdx, "override_theme_text_color", checked, menuId)
+                    )}
+                    <div class="four-col">
                       <div class="color-row">
                         <input type="color" class="color-swatch"
                           .value=${interval.color_from || "#000000"}
-                          @input=${(e) => this._updateEntityIntervalField(rowIdx, entIdx, iIdx, "color_from", e.target.value)}
+                          @input=${(e) => this._updateEntityIntervalField(rowIdx, entIdx, iIdx, "color_from", e.target.value, menuId)}
                           @click=${this._stopPropagation}
                         />
                         <ha-selector .hass=${this.hass} .label=${"Gradient from"}
                           .value=${interval.color_from || ""}
                           .selector=${{text: {}}}
-                          @value-changed=${(e) => this._updateEntityIntervalField(rowIdx, entIdx, iIdx, "color_from", e.detail.value)}
+                          @value-changed=${(e) => this._updateEntityIntervalField(rowIdx, entIdx, iIdx, "color_from", e.detail.value, menuId)}
                         ></ha-selector>
                       </div>
                       <div class="color-row">
                         <input type="color" class="color-swatch"
                           .value=${interval.color_to || "#000000"}
-                          @input=${(e) => this._updateEntityIntervalField(rowIdx, entIdx, iIdx, "color_to", e.target.value)}
+                          @input=${(e) => this._updateEntityIntervalField(rowIdx, entIdx, iIdx, "color_to", e.target.value, menuId)}
                           @click=${this._stopPropagation}
                         />
                         <ha-selector .hass=${this.hass} .label=${"Gradient to"}
                           .value=${interval.color_to || ""}
                           .selector=${{text: {}}}
-                          @value-changed=${(e) => this._updateEntityIntervalField(rowIdx, entIdx, iIdx, "color_to", e.detail.value)}
+                          @value-changed=${(e) => this._updateEntityIntervalField(rowIdx, entIdx, iIdx, "color_to", e.detail.value, menuId)}
                         ></ha-selector>
                       </div>
                       <div class="color-row">
                         <input type="color" class="color-swatch"
                           .value=${interval.text_color || "#FFFFFF"}
-                          @input=${(e) => this._updateEntityIntervalField(rowIdx, entIdx, iIdx, "text_color", e.target.value)}
+                          @input=${(e) => this._updateEntityIntervalField(rowIdx, entIdx, iIdx, "text_color", e.target.value, menuId)}
                           @click=${this._stopPropagation}
                         />
                         <ha-selector .hass=${this.hass} .label=${"Text color"}
                           .value=${interval.text_color || ""}
                           .selector=${{text: {}}}
-                          @value-changed=${(e) => this._updateEntityIntervalField(rowIdx, entIdx, iIdx, "text_color", e.detail.value)}
+                          @value-changed=${(e) => this._updateEntityIntervalField(rowIdx, entIdx, iIdx, "text_color", e.detail.value, menuId)}
                         ></ha-selector>
                       </div>
+                      ${this._renderShadowColorControl(interval, "shadow_color", "Active shadow color", interval.color_from || "#FF9800")}
                     </div>
                     <ha-selector .hass=${this.hass} .label=${"Match state (optional, e.g. on, off)"}
                       .value=${interval.match_state || ""}
                       .selector=${{text: {}}}
-                      @value-changed=${(e) => this._updateEntityIntervalField(rowIdx, entIdx, iIdx, "match_state", e.detail.value)}
+                      @value-changed=${(e) => this._updateEntityIntervalField(rowIdx, entIdx, iIdx, "match_state", e.detail.value, menuId)}
                     ></ha-selector>
                     <div class="two-col">
                       <ha-selector .hass=${this.hass} .label=${"State label (optional)"}
                         .value=${interval.state_text || ""}
                         .selector=${{text: {}}}
-                        @value-changed=${(e) => this._updateEntityIntervalField(rowIdx, entIdx, iIdx, "state_text", e.detail.value)}
+                        @value-changed=${(e) => this._updateEntityIntervalField(rowIdx, entIdx, iIdx, "state_text", e.detail.value, menuId)}
                       ></ha-selector>
                       <ha-selector .hass=${this.hass} .label=${"Suffix text (supports variables)"}
                         .value=${interval.suffix_text || ""}
                         .selector=${{text: {}}}
-                        @value-changed=${(e) => this._updateEntityIntervalField(rowIdx, entIdx, iIdx, "suffix_text", e.detail.value)}
+                        @value-changed=${(e) => this._updateEntityIntervalField(rowIdx, entIdx, iIdx, "suffix_text", e.detail.value, menuId)}
                       ></ha-selector>
                     </div>
                     <div class="helper-text">Variables: &lt;state&gt; &lt;unit&gt; &lt;dimmer_pct&gt; &lt;source&gt; &lt;title&gt; &lt;artist&gt; &lt;album&gt; &lt;title_artist&gt;</div>
                     <div class="action-row">
                       <ha-button class="danger" @click=${() => {
-                        this._config.rows[rowIdx].entities[entIdx].color_intervals.splice(iIdx, 1);
+                        if (!this._confirmDelete(`button color interval ${iIdx + 1}`)) return;
+                        ent.color_intervals.splice(iIdx, 1);
                         this.requestUpdate(); this._emitConfigChanged();
                       }}>Delete interval</ha-button>
                     </div>
@@ -2020,12 +3562,14 @@ if (!customElements.get(EDITOR_TAG)) {
               `)}
               <div class="action-row">
                 <ha-button @click=${() => {
-                  if (!this._config.rows[rowIdx].entities[entIdx].color_intervals)
-                    this._config.rows[rowIdx].entities[entIdx].color_intervals = [];
-                  this._config.rows[rowIdx].entities[entIdx].color_intervals.push({
+                  if (!ent.color_intervals) ent.color_intervals = [];
+                  ent.color_intervals.push({
                     from: 0, to: 10,
                     color_from: "#1E88E5", color_to: "#1E88E5",
                     text_color: "#FFFFFF",
+                    shadow_color: "",
+                    override_theme_colors: true,
+                    override_theme_text_color: true,
                     match_state: "", state_text: "", suffix_text: "",
                   });
                   this.requestUpdate(); this._emitConfigChanged();
@@ -2033,16 +3577,25 @@ if (!customElements.get(EDITOR_TAG)) {
               </div>
             ` : ""}
 
-            <div class="subsection-title">Tap action</div>
-            ${this._renderTapActionEditor(rowIdx, entIdx, ent.tap_action)}
+            ${!isMenu ? html`
+              <div class="subsection-title">Tap action</div>
+              ${this._renderTapActionEditor(ent, ent.tap_action)}
+            ` : ""}
 
             <div class="subsection-title">Badges</div>
-            ${badges.map((b, bIdx) => this._renderBadge(rowIdx, entIdx, b, bIdx))}
+            ${badges.length ? this._renderSelect("Badge style for this button", ent.badge_style || "inherit",
+              [["inherit","Inherit theme/global"],["pill","Pill"],["pill-strong","Pill strong"],["chip","Chip"],["underline","Underline"],["none","None"]],
+              (value) => {
+                ent.badge_style = value || "inherit";
+                this.requestUpdate();
+                this._emitConfigChanged();
+              }
+            ) : ""}
+            ${badges.map((b, bIdx) => this._renderBadge(badges, b, bIdx, scopeKey, rowIdx, entIdx))}
             <div class="action-row">
               <ha-button @click=${() => {
-                if (!this._config.rows[rowIdx].entities[entIdx].badges)
-                  this._config.rows[rowIdx].entities[entIdx].badges = [];
-                this._config.rows[rowIdx].entities[entIdx].badges.push({
+                if (!ent.badges) ent.badges = [];
+                ent.badges.push({
                   entity: "", icon: "", label: "", show_icon: true,
                   badge_type: "value", stats_mode: "max", stats_hours: 24,
                   media_action: "play_pause", media_info_mode: "title_artist",
@@ -2062,27 +3615,27 @@ if (!customElements.get(EDITOR_TAG)) {
                 this.requestUpdate(); this._emitConfigChanged();
               }}>Move down</ha-button>` : ""}
               <ha-button class="danger" @click=${() => {
+                if (!this._confirmDelete(`button “${ent.name || ent.entity || entIdx + 1}”`, `${badges.length} badge(s) will also be removed.`)) return;
                 entities.splice(entIdx, 1);
                 this.requestUpdate(); this._emitConfigChanged();
-              }}>Delete entity</ha-button>
+              }}>Delete button</ha-button>
             </div>
           </div>
-        </ha-expansion-panel>
+        </details>
       `;
     }
 
-    _renderTapActionEditor(rowIdx, entIdx, tapAction) {
+    _renderTapActionEditor(ent, tapAction) {
       const action = tapAction?.action || "default";
       const update = (field, value) => {
-        if (!this._config.rows[rowIdx].entities[entIdx].tap_action)
-          this._config.rows[rowIdx].entities[entIdx].tap_action = {};
+        if (!ent.tap_action) ent.tap_action = {};
         if (value === "" || value === undefined || value === null) {
-          delete this._config.rows[rowIdx].entities[entIdx].tap_action[field];
+          delete ent.tap_action[field];
         } else {
-          this._config.rows[rowIdx].entities[entIdx].tap_action[field] = value;
+          ent.tap_action[field] = value;
         }
-        if (this._config.rows[rowIdx].entities[entIdx].tap_action.action === "default") {
-          delete this._config.rows[rowIdx].entities[entIdx].tap_action;
+        if (ent.tap_action.action === "default") {
+          delete ent.tap_action;
         }
         this._emitConfigChanged();
       };
@@ -2138,24 +3691,83 @@ if (!customElements.get(EDITOR_TAG)) {
       `;
     }
 
-    _renderBadge(rowIdx, entIdx, b, bIdx) {
-      const badges = this._config.rows[rowIdx].entities[entIdx].badges;
+    _renderBadge(badges, b, bIdx, scopeKey, rowIdx, entIdx) {
       const showIcon = b.show_icon !== false;
       const type = b.badge_type || "value";
-      const header = b.label
-        ? `${type}: ${b.label}`
-        : b.entity ? `${type}: ${b.entity}` : `Badge ${bIdx + 1}`;
+      const typeLabels = {
+        value: "Value",
+        dimmer: "Dimmer",
+        stats: "Statistics",
+        media: "Media control",
+        media_info: "Media information",
+        alarm: "Alarm control",
+      };
+      const mediaActionLabels = {
+        play_pause: "Play/Pause",
+        play: "Play",
+        pause: "Pause",
+        stop: "Stop",
+        next: "Next track",
+        previous: "Previous track",
+        volume_up: "Volume up",
+        volume_down: "Volume down",
+        mute_toggle: "Mute toggle",
+      };
+      const mediaActionIcons = {
+        play_pause: "mdi:play-pause",
+        play: "mdi:play",
+        pause: "mdi:pause",
+        stop: "mdi:stop",
+        next: "mdi:skip-next",
+        previous: "mdi:skip-previous",
+        volume_up: "mdi:volume-plus",
+        volume_down: "mdi:volume-minus",
+        mute_toggle: "mdi:volume-mute",
+      };
+      const typeIcons = {
+        value: "mdi:numeric",
+        dimmer: "mdi:brightness-6",
+        stats: "mdi:chart-line",
+        media: mediaActionIcons[b.media_action || "play_pause"] || "mdi:play-circle-outline",
+        media_info: "mdi:music-note",
+        alarm: "mdi:shield-home-outline",
+      };
+      const humanize = (value) => String(value || "")
+        .replaceAll("_", " ")
+        .replace(/^./, (letter) => letter.toUpperCase());
+      const variantLabel = type === "media"
+        ? mediaActionLabels[b.media_action || "play_pause"]
+        : type === "stats"
+          ? `${humanize(b.stats_mode || "max")} · ${b.stats_hours ?? 24} h`
+          : type === "media_info"
+            ? humanize(b.media_info_mode || "title_artist").replaceAll(" ", " + ")
+            : type === "alarm"
+              ? humanize(b.alarm_action || "arm_home")
+              : "";
+      const friendlyName = b.entity
+        ? this.hass?.states?.[b.entity]?.attributes?.friendly_name || ""
+        : "";
+      const primaryLabel = b.label || friendlyName || b.entity || typeLabels[type] || `Badge ${bIdx + 1}`;
+      const detailParts = [typeLabels[type] || type, variantLabel, b.entity || "No entity selected"].filter(Boolean);
+      const editorIcon = b.icon || typeIcons[type] || "mdi:label-outline";
 
       return html`
-        <ha-expansion-panel .header=${header}>
+        <ha-expansion-panel class="badge-editor-panel">
+          <div slot="header" class="badge-editor-header">
+            <ha-icon .icon=${editorIcon}></ha-icon>
+            <div class="badge-editor-header-copy">
+              <b>Badge ${bIdx + 1} — ${primaryLabel}</b>
+              <span>${detailParts.join(" · ")}</span>
+            </div>
+          </div>
           <div class="expansion-content">
             <div class="picker-label">Badge entity</div>
-            <div class="badge-entity-picker-placeholder" id=${`badge-entity-picker-${rowIdx}-${entIdx}-${bIdx}`}></div>
+            <div class="badge-entity-picker-placeholder" id=${`badge-entity-picker-${scopeKey}-${rowIdx}-${entIdx}-${bIdx}`}></div>
 
             ${this._renderSelect("Badge type", type,
               [["value","Value"],["dimmer","Dimmer (lights)"],["stats","Stats (history)"],
                ["media","Media control"],["media_info","Media info"],["alarm","Alarm control"]],
-              (v) => { badges[bIdx].badge_type = v || "value"; this._emitConfigChanged(); }
+              (v) => { badges[bIdx].badge_type = v || "value"; this.requestUpdate(); this._emitConfigChanged(); }
             )}
 
             ${type === "stats" ? html`
@@ -2163,13 +3775,14 @@ if (!customElements.get(EDITOR_TAG)) {
                 ${this._renderSelect("Stats mode", b.stats_mode || "max",
                   [["min","Min"],["max","Max"],["avg","Average"],
                    ["last_on","Last on"],["last_off","Last off"],["last_changed","Last changed"]],
-                  (v) => { badges[bIdx].stats_mode = v || "max"; this._emitConfigChanged(); }
+                  (v) => { badges[bIdx].stats_mode = v || "max"; this.requestUpdate(); this._emitConfigChanged(); }
                 )}
                 <ha-selector .hass=${this.hass} .label=${"History window (hours)"}
                   .value=${b.stats_hours ?? 24}
                   .selector=${{number: {min: 1, step: 1, mode: "box"}}}
                   @value-changed=${(e) => {
                     badges[bIdx].stats_hours = Number(e.detail.value);
+                    this.requestUpdate();
                     this._emitConfigChanged();
                   }}
                 ></ha-selector>
@@ -2181,7 +3794,7 @@ if (!customElements.get(EDITOR_TAG)) {
                 [["play_pause","Play/Pause"],["play","Play"],["pause","Pause"],["stop","Stop"],
                  ["next","Next track"],["previous","Previous track"],
                  ["volume_up","Volume up"],["volume_down","Volume down"],["mute_toggle","Mute toggle"]],
-                (v) => { badges[bIdx].media_action = v || "play_pause"; this._emitConfigChanged(); }
+                (v) => { badges[bIdx].media_action = v || "play_pause"; this.requestUpdate(); this._emitConfigChanged(); }
               )}
             ` : ""}
 
@@ -2189,7 +3802,7 @@ if (!customElements.get(EDITOR_TAG)) {
               ${this._renderSelect("Media info mode", b.media_info_mode || "title_artist",
                 [["title","Title"],["artist","Artist"],["album","Album"],
                  ["source","Source"],["title_artist","Title + artist"]],
-                (v) => { badges[bIdx].media_info_mode = v || "title_artist"; this._emitConfigChanged(); }
+                (v) => { badges[bIdx].media_info_mode = v || "title_artist"; this.requestUpdate(); this._emitConfigChanged(); }
               )}
             ` : ""}
 
@@ -2198,7 +3811,7 @@ if (!customElements.get(EDITOR_TAG)) {
                 ${this._renderSelect("Alarm action", b.alarm_action || "arm_home",
                   [["arm_home","Arm home"],["arm_away","Arm away"],
                    ["arm_night","Arm night"],["disarm","Disarm"]],
-                  (v) => { badges[bIdx].alarm_action = v || "arm_home"; this._emitConfigChanged(); }
+                  (v) => { badges[bIdx].alarm_action = v || "arm_home"; this.requestUpdate(); this._emitConfigChanged(); }
                 )}
                 <ha-selector .hass=${this.hass} .label=${"Alarm code (optional)"}
                   .value=${b.alarm_code || ""}
@@ -2218,14 +3831,14 @@ if (!customElements.get(EDITOR_TAG)) {
             <div class="two-col">
               ${showIcon ? html`
                 <ha-icon-picker label="Icon" .hass=${this.hass} .value=${b.icon || ""}
-                  @value-changed=${(e) => { badges[bIdx].icon = e.detail.value; this._emitConfigChanged(); }}
+                  @value-changed=${(e) => { badges[bIdx].icon = e.detail.value; this.requestUpdate(); this._emitConfigChanged(); }}
                   @closed=${this._stopPropagation}
                 ></ha-icon-picker>
               ` : ""}
               <ha-selector .hass=${this.hass} .label=${"Label"}
                 .value=${b.label || ""}
                 .selector=${{text: {}}}
-                @value-changed=${(e) => { badges[bIdx].label = e.detail.value; this._emitConfigChanged(); }}
+                @value-changed=${(e) => { badges[bIdx].label = e.detail.value; this.requestUpdate(); this._emitConfigChanged(); }}
               ></ha-selector>
             </div>
 
@@ -2253,6 +3866,7 @@ if (!customElements.get(EDITOR_TAG)) {
 
             <div class="action-row">
               <ha-button class="danger" @click=${() => {
+                if (!this._confirmDelete(`badge “${b.label || b.entity || bIdx + 1}”`)) return;
                 badges.splice(bIdx, 1);
                 this.requestUpdate(); this._emitConfigChanged();
               }}>Delete badge</ha-button>
@@ -2265,22 +3879,113 @@ if (!customElements.get(EDITOR_TAG)) {
     _css() {
       return css`
         :host { display: block; }
+        .editor-wrap {
+          display:flex;
+          flex-direction:column;
+          gap:10px;
+          padding:8px 0;
+          container-type:inline-size;
+        }
 
-        ha-selector { display: block; margin-bottom: 12px; }
+        .editor-top-title {
+          padding: 10px 14px;
+          border-radius: 12px;
+          border: 1px solid color-mix(in srgb, var(--warning-color, #ff9800) 55%, transparent);
+          background: color-mix(in srgb, var(--warning-color, #ff9800) 22%, transparent);
+          color: var(--primary-text-color);
+          font-weight: 800;
+          letter-spacing: .2px;
+        }
+
+        ha-selector {
+          display:block;
+          min-width:0;
+          max-width:100%;
+          box-sizing:border-box;
+          margin-bottom:12px;
+        }
         ha-icon-picker { display: block; margin-bottom: 12px; }
         ha-expansion-panel { display: block; margin-bottom: 8px; }
 
-        .section { margin-bottom: 24px; }
+        .section {
+          display:block;
+          padding:0;
+          border:0;
+          border-radius:13px;
+        }
+        .section-summary {
+          display:block;
+          list-style:none;
+          cursor:pointer;
+          border-radius:12px;
+        }
+        .section-summary::-webkit-details-marker { display:none; }
+        .section-summary:focus-visible {
+          outline:2px solid var(--primary-color, #03a9f4);
+          outline-offset:2px;
+        }
 
         .section-title {
-          font-size: 13px;
-          font-weight: 600;
-          letter-spacing: 0.06em;
-          text-transform: uppercase;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          background: color-mix(in srgb, var(--warning-color, #ff9800) 22%, transparent);
+          padding: 8px 10px;
+          border-radius: 12px;
+          border: 1px solid color-mix(in srgb, var(--warning-color, #ff9800) 55%, transparent);
+          font-weight: 800;
+          opacity: .98;
           color: var(--primary-text-color);
-          margin-bottom: 12px;
-          padding-bottom: 8px;
-          border-bottom: 2px solid var(--divider-color);
+          letter-spacing: .2px;
+          transition:background .16s ease, border-color .16s ease, box-shadow .16s ease;
+        }
+        .section-summary:hover .section-title {
+          background:color-mix(in srgb, var(--warning-color, #ff9800) 29%, transparent);
+        }
+        .editor-section[open] > .section-summary .section-title {
+          border-color:color-mix(in srgb, var(--warning-color, #ff9800) 72%, transparent);
+          box-shadow:0 4px 14px rgba(0,0,0,.12);
+        }
+        .section-title ha-icon {
+          width: 20px;
+          height: 20px;
+          color: var(--warning-color, #ff9800);
+        }
+        .section-title-label {
+          flex:1 1 auto;
+          min-width:0;
+          overflow:hidden;
+          text-overflow:ellipsis;
+          white-space:nowrap;
+        }
+        .section-count {
+          margin-left:auto;
+          padding:2px 7px;
+          border-radius:999px;
+          background:rgba(127,127,127,.16);
+          color:var(--secondary-text-color);
+          font-size:10px;
+          font-weight:700;
+          white-space:nowrap;
+        }
+        .section-title .section-chevron {
+          width:18px;
+          height:18px;
+          --mdc-icon-size:18px;
+          color:var(--secondary-text-color);
+          transition:transform .18s ease;
+        }
+        .editor-section[open] > .section-summary .section-chevron { transform:rotate(180deg); }
+        .section-body {
+          display:flex;
+          flex-direction:column;
+          gap:10px;
+          padding:11px 4px 2px;
+        }
+        .section-note {
+          font-size: 12px;
+          color: var(--secondary-text-color);
+          line-height: 1.5;
         }
 
         .subsection-title {
@@ -2293,28 +3998,529 @@ if (!customElements.get(EDITOR_TAG)) {
         }
 
         .expansion-content { padding: 12px; }
+        .row-buttons-label {
+          font-size: 12px;
+          font-weight: 700;
+          color: var(--secondary-text-color);
+          letter-spacing: .04em;
+          text-transform: uppercase;
+          margin: 4px 0 8px;
+        }
+
+        .button-details {
+          display: block;
+          margin: 0 0 10px;
+          border: 1px solid var(--divider-color, rgba(127,127,127,.25));
+          border-radius: 15px;
+          overflow: hidden;
+          background: color-mix(in srgb, var(--card-background-color, #fff) 96%, var(--primary-color, #03a9f4));
+        }
+        .button-details > summary {
+          display: block;
+          cursor: pointer;
+          list-style: none;
+          padding: 8px;
+        }
+        .button-details > summary::-webkit-details-marker { display:none; }
+        .button-details[open] > summary {
+          border-bottom: 1px solid var(--divider-color, rgba(127,127,127,.25));
+        }
+        .button-preview {
+          position: relative;
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          min-height: 52px;
+          padding: 10px 12px;
+          box-sizing: border-box;
+          border-radius: var(--preview-radius, 12px);
+          border: var(--preview-border-width, 0px) solid var(--preview-border, transparent);
+          color: var(--preview-text, #fff);
+          background: linear-gradient(135deg, var(--preview-from, #1E88E5), var(--preview-to, #1E88E5));
+          box-shadow: var(--preview-shadow, 0 3px 10px rgba(0,0,0,.22));
+        }
+        .button-preview > ha-icon {
+          width:24px;
+          height:24px;
+          flex:0 0 auto;
+          color:inherit !important;
+          --icon-primary-color:currentColor;
+        }
+        .button-preview-type {
+          position: absolute;
+          top: 7px;
+          right: 7px;
+          width: 12px;
+          height: 12px;
+          display: grid;
+          place-items: center;
+          background: transparent;
+          border: 0;
+          color: inherit;
+          opacity: .28;
+          filter: saturate(.7);
+          overflow: hidden;
+          contain: paint;
+          pointer-events: none;
+        }
+        .button-preview-type ha-icon {
+          display: block;
+          width: 9px;
+          height: 9px;
+          --mdc-icon-size: 9px;
+          line-height: 9px;
+        }
+        .button-preview-copy { flex: 1 1 auto; min-width: 0; }
+        .button-preview-name { font-size: 14px; font-weight: 800; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        .button-preview-subtitle { font-size: 11px; opacity: .86; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        .button-preview-badges { display:flex; flex-wrap:wrap; gap:4px; margin-top:5px; }
+        .button-preview-badges span {
+          font-size: 9px;
+          padding: 2px 6px;
+          border-radius: 999px;
+          background: rgba(255,255,255,.18);
+          border: 1px solid rgba(255,255,255,.2);
+        }
+        .preview-badge-pill-strong span {
+          background:rgba(0,0,0,.34);
+          box-shadow:0 1px 3px rgba(0,0,0,.25);
+        }
+        .preview-badge-chip span { border-radius:4px; }
+        .preview-badge-underline span {
+          padding:1px 0;
+          border:0;
+          border-bottom:1px solid currentColor;
+          border-radius:0;
+          background:transparent;
+        }
+        .preview-badge-none span {
+          padding:0;
+          border:0;
+          border-radius:0;
+          background:transparent;
+        }
+        .button-preview-value {
+          flex: 0 0 auto;
+          font-size: 16px;
+          font-weight: 800;
+          white-space: nowrap;
+          margin-right: 13px;
+        }
+        .preview-chevron { transition: transform .18s ease; }
+        .button-details[open] .preview-chevron { transform: rotate(180deg); }
+
+        .menu-settings {
+          margin: 0 0 12px;
+          padding: 12px;
+          border-radius: 12px;
+          border: 1px solid color-mix(in srgb, var(--primary-color, #03a9f4) 35%, transparent);
+          background: color-mix(in srgb, var(--primary-color, #03a9f4) 8%, transparent);
+        }
+        .menu-help-details {
+          display:block;
+          overflow:hidden;
+          border:1px solid color-mix(in srgb, var(--info-color, #039be5) 34%, transparent);
+          border-radius:12px;
+          background:color-mix(in srgb, var(--info-color, #039be5) 5%, transparent);
+        }
+        .menu-help-details > summary {
+          display:flex;
+          align-items:center;
+          gap:8px;
+          min-height:38px;
+          padding:7px 10px;
+          box-sizing:border-box;
+          list-style:none;
+          cursor:pointer;
+          color:var(--primary-text-color);
+          font-size:12px;
+          font-weight:800;
+        }
+        .menu-help-details > summary::-webkit-details-marker { display:none; }
+        .menu-help-details > summary:hover { background:color-mix(in srgb, var(--info-color, #039be5) 10%, transparent); }
+        .menu-help-details > summary > ha-icon:first-child {
+          width:17px;
+          height:17px;
+          --mdc-icon-size:17px;
+          color:var(--info-color, #039be5);
+          flex:0 0 17px;
+        }
+        .menu-help-details > summary small {
+          margin-left:auto;
+          color:var(--secondary-text-color);
+          font-size:10px;
+          font-weight:600;
+        }
+        .menu-help-details .help-chevron {
+          width:16px;
+          height:16px;
+          --mdc-icon-size:16px;
+          color:var(--secondary-text-color);
+          transition:transform .18s ease;
+        }
+        .menu-help-details[open] .help-chevron { transform:rotate(180deg); }
+        .menu-help-details[open] > summary small { display:none; }
+        .menu-guide {
+          padding: 13px 14px;
+          border-radius: 14px;
+          border: 1px solid color-mix(in srgb, var(--info-color, #039be5) 38%, transparent);
+          background: color-mix(in srgb, var(--info-color, #039be5) 10%, transparent);
+          color: var(--primary-text-color);
+          font-size: 12px;
+          line-height: 1.5;
+        }
+        .menu-help-details .menu-guide {
+          border:0;
+          border-top:1px solid color-mix(in srgb, var(--info-color, #039be5) 25%, transparent);
+          border-radius:0;
+        }
+        .menu-guide-title {
+          display: flex;
+          align-items: center;
+          gap: 7px;
+          font-size: 14px;
+          font-weight: 800;
+          margin-bottom: 7px;
+        }
+        .menu-guide-title ha-icon { width:20px; height:20px; color:var(--info-color, #039be5); }
+        .menu-guide ol { margin: 0; padding-left: 21px; }
+        .menu-guide li { margin: 0 0 5px; }
+        .menu-guide-tip {
+          margin-top: 9px;
+          padding-top: 9px;
+          border-top: 1px solid color-mix(in srgb, var(--info-color, #039be5) 28%, transparent);
+          color: var(--secondary-text-color);
+        }
+        .menu-index {
+          padding: 11px;
+          border-radius: 13px;
+          border: 1px solid var(--divider-color, rgba(127,127,127,.22));
+          background: rgba(127,127,127,.05);
+        }
+        .menu-index-title, .menu-usage-title {
+          display:flex;
+          align-items:center;
+          gap:8px;
+          font-weight:800;
+          font-size:12px;
+          margin-bottom:8px;
+        }
+        .menu-index-title ha-icon, .menu-usage-title ha-icon {
+          display:block;
+          width:16px;
+          height:16px;
+          --mdc-icon-size:16px;
+          flex:0 0 16px;
+          opacity:.78;
+        }
+        .menu-quicklinks { display:flex; flex-wrap:wrap; gap:7px; }
+        .menu-quicklinks button {
+          appearance:none;
+          border:1px solid color-mix(in srgb, var(--primary-color, #03a9f4) 35%, transparent);
+          background:color-mix(in srgb, var(--primary-color, #03a9f4) 10%, transparent);
+          color:var(--primary-text-color);
+          border-radius:999px;
+          padding:6px 10px;
+          display:inline-flex;
+          align-items:center;
+          gap:7px;
+          font:inherit;
+          font-size:11px;
+          cursor:pointer;
+        }
+        .menu-quicklinks button ha-icon {
+          display:block;
+          width:14px;
+          height:14px;
+          --mdc-icon-size:14px;
+          flex:0 0 14px;
+          opacity:.72;
+        }
+        .menu-quicklinks button small {
+          min-width:16px;
+          height:16px;
+          border-radius:999px;
+          display:grid;
+          place-items:center;
+          background:rgba(127,127,127,.18);
+          font-size:9px;
+        }
+        .menu-group {
+          padding:10px;
+          border-radius:14px;
+          border:1px solid var(--divider-color, rgba(127,127,127,.22));
+          background:rgba(127,127,127,.035);
+        }
+        .menu-group-title {
+          display:flex;
+          align-items:center;
+          gap:7px;
+          font-size:12px;
+          font-weight:800;
+          color:var(--secondary-text-color);
+          margin-bottom:10px;
+          padding-bottom:8px;
+          border-bottom:1px solid var(--divider-color, rgba(127,127,127,.18));
+        }
+        .menu-group-title ha-icon {
+          display:block;
+          width:18px;
+          height:18px;
+          --mdc-icon-size:18px;
+          flex:0 0 18px;
+        }
+        .menu-group-title span { margin-left:auto; padding:2px 7px; border-radius:999px; background:rgba(127,127,127,.12); }
+        .menu-editor-panel,
+        .row-editor-panel,
+        .interval-editor-panel,
+        .theme-editor-panel,
+        .badge-editor-panel {
+          display:block;
+          overflow:hidden;
+          border:1px solid color-mix(in srgb, var(--primary-color, #03a9f4) 28%, var(--divider-color, rgba(127,127,127,.22)));
+          border-left:3px solid color-mix(in srgb, var(--primary-color, #03a9f4) 72%, transparent);
+          border-radius:12px;
+          background:color-mix(in srgb, var(--card-background-color, #fff) 97%, var(--primary-color, #03a9f4));
+          box-shadow:0 2px 8px rgba(0,0,0,.07);
+          margin:0 0 10px;
+        }
+        .menu-editor-panel + .menu-editor-panel,
+        .row-editor-panel + .row-editor-panel,
+        .interval-editor-panel + .interval-editor-panel,
+        .theme-editor-panel + .theme-editor-panel,
+        .badge-editor-panel + .badge-editor-panel { margin-top:10px; }
+        .row-editor-panel {
+          border-color:color-mix(in srgb, var(--warning-color, #ff9800) 25%, var(--divider-color, rgba(127,127,127,.22)));
+          border-left-color:color-mix(in srgb, var(--warning-color, #ff9800) 70%, transparent);
+          background:color-mix(in srgb, var(--card-background-color, #fff) 98%, var(--warning-color, #ff9800));
+        }
+        .interval-editor-panel {
+          border-color:color-mix(in srgb, var(--info-color, #039be5) 28%, var(--divider-color, rgba(127,127,127,.22)));
+          border-left-color:color-mix(in srgb, var(--info-color, #039be5) 75%, transparent);
+          background:color-mix(in srgb, var(--card-background-color, #fff) 98%, var(--info-color, #039be5));
+        }
+        .theme-editor-panel {
+          border-color:color-mix(in srgb, var(--warning-color, #ff9800) 30%, var(--divider-color, rgba(127,127,127,.22)));
+          border-left-color:color-mix(in srgb, var(--warning-color, #ff9800) 76%, transparent);
+          background:color-mix(in srgb, var(--card-background-color, #fff) 96%, var(--warning-color, #ff9800));
+        }
+        .badge-editor-panel {
+          border-color:color-mix(in srgb, var(--accent-color, #7e57c2) 30%, var(--divider-color, rgba(127,127,127,.22)));
+          border-left-color:color-mix(in srgb, var(--accent-color, #7e57c2) 76%, transparent);
+          background:color-mix(in srgb, var(--card-background-color, #fff) 97%, var(--accent-color, #7e57c2));
+        }
+        .menu-editor-panel:hover,
+        .row-editor-panel:hover,
+        .interval-editor-panel:hover,
+        .theme-editor-panel:hover,
+        .badge-editor-panel:hover { box-shadow:0 4px 13px rgba(0,0,0,.11); }
+        .menu-usage-box {
+          padding:10px;
+          margin:0 0 12px;
+          border-radius:12px;
+          border:1px solid color-mix(in srgb, var(--primary-color, #03a9f4) 26%, transparent);
+          background:color-mix(in srgb, var(--primary-color, #03a9f4) 6%, transparent);
+        }
+        .menu-usage-links { display:flex; flex-wrap:wrap; gap:6px; }
+        .menu-usage-links span { padding:4px 7px; border-radius:8px; background:rgba(127,127,127,.11); font-size:10px; }
+        .menu-color-help { margin: -2px 0 6px; }
+        .compact-toggle { margin: 0; padding: 8px 0; }
+        .interval-theme-overrides {
+          display:grid;
+          grid-template-columns:repeat(2, minmax(0, 1fr));
+          gap:8px;
+          margin:2px 0 12px;
+        }
+        .interval-theme-context {
+          grid-column:1 / -1;
+          display:flex;
+          align-items:flex-start;
+          gap:8px;
+          padding:9px 10px;
+          border-radius:10px;
+          background:color-mix(in srgb, var(--warning-color, #ff9800) 10%, transparent);
+          color:var(--secondary-text-color);
+          font-size:10px;
+          line-height:1.4;
+        }
+        .interval-theme-context ha-icon {
+          display:block;
+          width:17px;
+          height:17px;
+          --mdc-icon-size:17px;
+          flex:0 0 17px;
+          color:var(--warning-color, #ff9800);
+        }
+        .interval-theme-context div { display:flex; flex-direction:column; gap:2px; }
+        .interval-theme-context b { color:var(--primary-text-color); font-size:11px; }
+        .toggle-row.interval-theme-toggle {
+          gap:10px;
+          margin:0;
+          padding:7px 2px;
+          border:0;
+          border-radius:0;
+          background:transparent;
+        }
+        .interval-theme-toggle .picker-label {
+          margin:0;
+          color:var(--primary-text-color);
+          font-size:12px;
+          font-weight:700;
+        }
+        .required-control {
+          display:inline-flex;
+          align-items:center;
+          gap:5px;
+          padding:4px 8px;
+          border-radius:999px;
+          background:color-mix(in srgb, var(--primary-color, #03a9f4) 12%, transparent);
+          color:var(--secondary-text-color);
+          font-size:11px;
+          font-weight:700;
+          white-space:nowrap;
+        }
+        .required-control ha-icon {
+          display:block;
+          width:13px;
+          height:13px;
+          --mdc-icon-size:13px;
+          flex:0 0 13px;
+        }
+        .menu-editor-content { border-left:0; }
+        .menu-editor-panel > .expansion-content,
+        .row-editor-panel > .expansion-content,
+        .interval-editor-panel > .expansion-content,
+        .theme-editor-panel > .expansion-content,
+        .badge-editor-panel > .expansion-content {
+          border-top:1px solid var(--divider-color, rgba(127,127,127,.2));
+        }
+
+        .theme-manager {
+          padding:12px;
+          border-radius:14px;
+          border:1px solid color-mix(in srgb, var(--warning-color, #ff9800) 35%, transparent);
+          background:color-mix(in srgb, var(--warning-color, #ff9800) 6%, transparent);
+        }
+        .theme-manager > .subsection-title { margin-top:0; }
+        .theme-list { display:flex; flex-direction:column; gap:0; }
+        .color-preview-panel::part(summary) {
+          color:var(--panel-preview-text, #fff);
+          background:linear-gradient(
+            135deg,
+            var(--panel-preview-from, #1E88E5),
+            var(--panel-preview-to, var(--panel-preview-from, #1E88E5))
+          );
+        }
+        .color-preview-header {
+          display:flex;
+          align-items:center;
+          gap:8px;
+          flex:1 1 auto;
+          min-width:0;
+          width:100%;
+          color:var(--panel-preview-text, #fff) !important;
+          font-weight:800;
+        }
+        .color-preview-header span {
+          overflow:hidden;
+          text-overflow:ellipsis;
+          white-space:nowrap;
+        }
+        .theme-preview-header ha-icon {
+          display:block;
+          width:18px;
+          height:18px;
+          --mdc-icon-size:18px;
+          flex:0 0 18px;
+          color:inherit;
+        }
+        .badge-editor-header {
+          display:flex;
+          align-items:center;
+          gap:9px;
+          flex:1 1 auto;
+          min-width:0;
+          width:100%;
+        }
+        .badge-editor-header > ha-icon {
+          display:block;
+          width:20px;
+          height:20px;
+          --mdc-icon-size:20px;
+          flex:0 0 20px;
+          color:var(--accent-color, #7e57c2);
+        }
+        .badge-editor-header-copy {
+          display:flex;
+          flex-direction:column;
+          gap:2px;
+          flex:1 1 auto;
+          min-width:0;
+        }
+        .badge-editor-header-copy b,
+        .badge-editor-header-copy span {
+          overflow:hidden;
+          text-overflow:ellipsis;
+          white-space:nowrap;
+        }
+        .badge-editor-header-copy b {
+          color:var(--primary-text-color);
+          font-size:12px;
+          line-height:1.25;
+        }
+        .badge-editor-header-copy span {
+          color:var(--secondary-text-color);
+          font-size:10px;
+          font-weight:500;
+          line-height:1.25;
+        }
+        .theme-usage, .theme-active-note, .inline-note { font-size:11px; color:var(--secondary-text-color); line-height:1.45; }
+        .theme-usage { margin:7px 0; }
+        .theme-active-note {
+          display:flex;
+          align-items:flex-start;
+          gap:6px;
+          padding:8px 10px;
+          margin:-4px 0 10px;
+          border-radius:10px;
+          background:color-mix(in srgb, var(--warning-color, #ff9800) 10%, transparent);
+        }
+        .theme-active-note ha-icon { width:17px; height:17px; flex:0 0 auto; }
 
         .two-col {
           display: grid;
-          grid-template-columns: 1fr 1fr;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
           gap: 8px;
           margin-bottom: 0;
         }
 
         .three-col {
           display: grid;
-          grid-template-columns: 1fr 1fr 1fr;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 8px;
+          margin-bottom: 12px;
+        }
+        .four-col {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
           gap: 8px;
           margin-bottom: 12px;
         }
 
         .color-row {
           display: grid;
-          grid-template-columns: 36px 1fr;
+          grid-template-columns: 36px minmax(0, 1fr);
           gap: 8px;
           align-items: center;
+          min-width:0;
+          width:100%;
           margin-bottom: 0;
         }
+        .two-col > *,
+        .three-col > *,
+        .four-col > *,
+        .color-row > * { min-width:0; }
+        .color-row ha-selector { width:100%; min-width:0; }
 
         .color-swatch {
           width: 36px;
@@ -2357,11 +4563,20 @@ if (!customElements.get(EDITOR_TAG)) {
 
         .action-row {
           display: flex;
-          gap: 8px;
+          gap: 5px;
           flex-wrap: wrap;
           margin-top: 8px;
           padding-top: 8px;
           border-top: 1px solid var(--divider-color);
+        }
+        .action-row ha-button {
+          zoom: .86;
+          --mdc-typography-button-font-size: 11px;
+          --mdc-button-horizontal-padding: 8px;
+          --mdc-button-height: 30px;
+          --md-filled-button-container-height: 30px;
+          --md-outlined-button-container-height: 30px;
+          letter-spacing: .01em;
         }
 
         .state-icons-block { margin-bottom: 8px; }
@@ -2371,6 +4586,35 @@ if (!customElements.get(EDITOR_TAG)) {
         ha-button.danger {
           --primary-color: var(--error-color);
           --mdc-theme-primary: var(--error-color);
+        }
+
+        .support-card {
+          border-radius: 16px;
+          border: 1px solid rgba(255,255,255,.08);
+          background: rgba(0,0,0,.18);
+          padding: 14px;
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+        }
+        .support-title { font-weight: 800; }
+        .support-text { font-size: 13px; opacity: .9; line-height: 1.35; }
+        .support-link { display:flex; width:max-content; }
+        .support-link img { border-radius:12px; box-shadow:0 6px 20px rgba(0,0,0,.35); }
+
+        @container (max-width: 520px) {
+          .three-col { grid-template-columns:repeat(2, minmax(0, 1fr)); }
+        }
+
+        @container (max-width: 380px) {
+          .two-col, .three-col, .four-col { grid-template-columns:1fr; }
+          .interval-theme-overrides { grid-template-columns:1fr; }
+        }
+
+        @media (max-width: 600px) {
+          .two-col, .three-col, .four-col { grid-template-columns: 1fr; }
+          .menu-toggle-grid { grid-template-columns: 1fr; }
+          .interval-theme-overrides { grid-template-columns:1fr; }
         }
       `;
     }
