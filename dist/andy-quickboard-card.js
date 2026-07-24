@@ -1,6 +1,6 @@
 /**
  * Andy Quickboard Card
- * v1.2.1
+ * v1.2.2
  * ------------------------------------------------------------------
  * Developed by: Andreas ("AndyBonde") with some help from AI :).
  *
@@ -19,9 +19,21 @@
 
 const CARD_TAG = "andy-quickboard-card";
 const EDITOR_TAG = "andy-quickboard-card-editor";
+const NAVIGATE_EVENT = "andy-quickboard-navigate";
+const NAVIGATION_STATE_EVENT = "andy-quickboard-navigation-state";
+const NAVIGATION_STATE_STORE = "__andyQuickboardNavigationState";
+const NAVIGATION_DEFAULT_STORE = "__andyQuickboardNavigationDefaults";
+
+const createQuickboardCardId = () => {
+  const uuid = globalThis.crypto?.randomUUID?.();
+  if (uuid) return `quickboard_${uuid}`;
+  const timestamp = Date.now().toString(36);
+  const random = Math.random().toString(36).slice(2, 12);
+  return `quickboard_${timestamp}_${random}`;
+};
 
 console.info(
-  `%c Andy Quickboard Card %c v1.2.1 loaded `,
+  `%c Andy Quickboard Card %c v1.2.2 loaded `,
   "color: white; background: #1565C0; padding: 4px 8px; border-radius: 4px 0 0 4px;",
   "color: white; background: #1E88E5; padding: 4px 8px; border-radius: 0 4px 4px 0;"
 );
@@ -50,6 +62,13 @@ if (!customElements.get(CARD_TAG)) {
       this._popupMenuStack = [];
       this._hoveredTileKey = "";
       this._hoverContinuityTargets = [];
+      this._selectedButtonKey = "";
+      this._instanceToken = createQuickboardCardId();
+      this._publishedDefaultTargets = new Set();
+      this._appliedExternalDefaultKey = "";
+      this._boundExternalNavigation = (ev) => this._handleExternalNavigation(ev);
+      this._boundNavigationState = (ev) => this._handleNavigationState(ev);
+      this._boundLocationChanged = () => this._handleLocationChanged();
     }
 
     static getConfigElement() {
@@ -60,6 +79,7 @@ if (!customElements.get(CARD_TAG)) {
       const first = entities && entities.length ? entities[0] : "sensor.example";
       return {
         type: `custom:${CARD_TAG}`,
+        card_id: createQuickboardCardId(),
         title: "Home quickboard",
         color_intervals: [
           {
@@ -121,10 +141,13 @@ if (!customElements.get(CARD_TAG)) {
           shadow_color: "#FF9800",
         },
         badge_style: "pill",
+        button_style: "raised",
+        flat_layout: "rail",
         dimmer_slider_color: "#FFFFFF",
         button_themes: [],
         default_theme_id: "",
         main_menu_theme_id: "",
+        default_menu_id: "",
         show_button_type_indicator: false,
         menus: [],
         rows: [
@@ -137,6 +160,7 @@ if (!customElements.get(CARD_TAG)) {
                 icon: "",
                 icon_mode: "single",
                 icon_states: [],
+                icon_size: 20,
                 name: "Living room",
                 value_font_size: 1.0,
                 label_font_size: 1.0,
@@ -153,22 +177,40 @@ if (!customElements.get(CARD_TAG)) {
 
     setConfig(config) {
       if (!config) throw new Error("Configuration is required");
-      if (!config.rows || !Array.isArray(config.rows)) {
-        throw new Error("You must define at least one row in 'rows'");
-      }
-      this._config = config;
+      const previousDefaultMenuId = this._configuredDefaultMenuId;
+      this._runtimeCardId =
+        String(config.card_id || "").trim() ||
+        this._runtimeCardId ||
+        createQuickboardCardId();
+      this._config = {
+        ...config,
+        card_id: this._runtimeCardId,
+        rows: Array.isArray(config.rows) ? config.rows : [],
+      };
+      this._configuredDefaultMenuId = this._rootMenuId();
       if (!this._statsCache) this._statsCache = {};
-      if (!this._mainMenuStack || !this._mainMenuStack.length) {
-        this._mainMenuStack = [{ id: "", show_back: false, show_close: false }];
+      if (
+        previousDefaultMenuId !== this._configuredDefaultMenuId ||
+        !this._mainMenuStack ||
+        !this._mainMenuStack.length
+      ) {
+        this._resetMainMenu();
+        this._appliedExternalDefaultKey = "";
       }
       const currentMain = this._mainMenuStack[this._mainMenuStack.length - 1]?.id || "";
       if (currentMain && !this._findMenu(currentMain)) {
-        this._mainMenuStack = [{ id: "", show_back: false, show_close: false }];
+        this._resetMainMenu();
+        this._appliedExternalDefaultKey = "";
       }
       if (this._popupMenuStack?.some((entry) => entry.id && !this._findMenu(entry.id))) {
         this._popupMenuStack = [];
       }
-      if (this.shadowRoot) this._render();
+      this._applyPendingExternalDefault();
+      this._publishDefaultExternalNavigations();
+      if (this.shadowRoot) {
+        this._render();
+        this._announceNavigationState();
+      }
     }
 
     set hass(hass) {
@@ -187,11 +229,48 @@ if (!customElements.get(CARD_TAG)) {
 
     connectedCallback() {
       if (!this.shadowRoot) this.attachShadow({ mode: "open" });
+      window.addEventListener(NAVIGATE_EVENT, this._boundExternalNavigation);
+      window.addEventListener(NAVIGATION_STATE_EVENT, this._boundNavigationState);
+      window.addEventListener("location-changed", this._boundLocationChanged);
+      window.addEventListener("popstate", this._boundLocationChanged);
+      this._applyPendingExternalDefault();
+      this._publishDefaultExternalNavigations();
       this._render();
+      this._announceNavigationState();
+    }
+
+    disconnectedCallback() {
+      window.removeEventListener(NAVIGATE_EVENT, this._boundExternalNavigation);
+      window.removeEventListener(NAVIGATION_STATE_EVENT, this._boundNavigationState);
+      window.removeEventListener("location-changed", this._boundLocationChanged);
+      window.removeEventListener("popstate", this._boundLocationChanged);
+      this._clearPublishedDefaultNavigations();
     }
 
     _findMenu(menuId) {
       return (this._config?.menus || []).find((menu) => menu.id === menuId);
+    }
+
+    _rootMenuId() {
+      const configured = String(this._config?.default_menu_id || "").trim();
+      if (configured && this._findMenu(configured)) return configured;
+      const hasExplicitDefault = Object.prototype.hasOwnProperty.call(
+        this._config || {},
+        "default_menu_id"
+      );
+      if (!hasExplicitDefault && !(this._config?.rows || []).length) {
+        return this._config?.menus?.[0]?.id || "";
+      }
+      return "";
+    }
+
+    _rootMenuEntry() {
+      return { id: this._rootMenuId(), show_back: false, show_close: false };
+    }
+
+    _resetMainMenu() {
+      this._popupMenuStack = [];
+      this._mainMenuStack = [this._rootMenuEntry()];
     }
 
     _findTheme(themeId) {
@@ -216,14 +295,328 @@ if (!customElements.get(CARD_TAG)) {
       return this._findTheme(this._config?.default_theme_id) || null;
     }
 
+    _resolveButtonStyle(entCfg, theme = null) {
+      const buttonChoice = entCfg?.button_style;
+      if (buttonChoice && buttonChoice !== "inherit") return buttonChoice;
+      const themeChoice = theme?.button_style;
+      if (themeChoice && themeChoice !== "inherit") return themeChoice;
+      return this._config?.button_style || "raised";
+    }
+
+    _usesFlatRail(entCfg, menuId = "", rowCfg = null) {
+      const theme = this._resolveTheme(entCfg, menuId, rowCfg);
+      return (
+        this._resolveButtonStyle(entCfg, theme) === "flat" &&
+        (this._config?.flat_layout || "rail") === "rail"
+      );
+    }
+
+    _isFlatRailMenu(menuId = "") {
+      const rows = this._menuRows(menuId);
+      const buttons = [];
+      rows.forEach((row) => (row.entities || []).forEach((ent) =>
+        buttons.push({ ent, row })
+      ));
+      return buttons.length > 0 && buttons.every(({ ent, row }) =>
+        this._usesFlatRail(ent, menuId, row)
+      );
+    }
+
+    _normalizeNavigationPath(path) {
+      const raw = String(path || "").trim();
+      if (!raw) return "";
+      try {
+        const origin = window.location?.origin || "http://homeassistant.local";
+        const pathname = new URL(raw, origin).pathname || "/";
+        return pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname;
+      } catch (_) {
+        const pathname = raw.split(/[?#]/, 1)[0] || "/";
+        const withSlash = pathname.startsWith("/") ? pathname : `/${pathname}`;
+        return withSlash.length > 1 ? withSlash.replace(/\/+$/, "") : withSlash;
+      }
+    }
+
+    _currentNavigationPath() {
+      return this._normalizeNavigationPath(window.location?.pathname || "/");
+    }
+
+    _navigationPathMatches(entCfg) {
+      if (entCfg?.button_type !== "navigation" || !entCfg.navigation_path) return false;
+      const current = this._currentNavigationPath();
+      const target = this._normalizeNavigationPath(entCfg.navigation_path);
+      if (!target) return false;
+      if ((entCfg.active_path_match || "exact") === "prefix") {
+        return current === target || current.startsWith(`${target}/`);
+      }
+      return current === target;
+    }
+
+    _defaultNavigationButton(menuId = "") {
+      for (const row of this._menuRows(menuId)) {
+        const found = (row.entities || []).find((ent) =>
+          ent.button_type === "navigation" && ent.navigation_default === true
+        );
+        if (found) return found;
+      }
+      return null;
+    }
+
+    _menuHasNavigationPathMatch(menuId = "") {
+      return this._menuRows(menuId).some((row) =>
+        (row.entities || []).some((ent) => this._navigationPathMatches(ent))
+      );
+    }
+
+    _isNavigationButtonActive(entCfg, menuId = "") {
+      if (this._navigationPathMatches(entCfg)) return true;
+      if (this._menuHasNavigationPathMatch(menuId)) return false;
+      return this._defaultNavigationButton(menuId) === entCfg;
+    }
+
+    _handleLocationChanged() {
+      if (this.shadowRoot) this._render();
+    }
+
+    _buttonKey(menuId, rowIdx, entIdx) {
+      return `${menuId || "__root__"}:${rowIdx}:${entIdx}`;
+    }
+
+    _forEachConfiguredButton(callback) {
+      const visit = (rows, menuId) => (rows || []).forEach((row, rowIdx) =>
+        (row.entities || []).forEach((ent, entIdx) =>
+          callback(ent, this._buttonKey(menuId, rowIdx, entIdx), menuId, row)
+        )
+      );
+      visit(this._config?.rows, "");
+      (this._config?.menus || []).forEach((menu) => visit(menu.rows, menu.id));
+    }
+
+    _navigationStateStore() {
+      if (typeof window === "undefined") return {};
+      if (!window[NAVIGATION_STATE_STORE] || typeof window[NAVIGATION_STATE_STORE] !== "object") {
+        window[NAVIGATION_STATE_STORE] = Object.create(null);
+      }
+      return window[NAVIGATION_STATE_STORE];
+    }
+
+    _navigationDefaultStore() {
+      if (typeof window === "undefined") return {};
+      if (!window[NAVIGATION_DEFAULT_STORE] || typeof window[NAVIGATION_DEFAULT_STORE] !== "object") {
+        window[NAVIGATION_DEFAULT_STORE] = Object.create(null);
+      }
+      return window[NAVIGATION_DEFAULT_STORE];
+    }
+
+    _defaultExternalMenuRequests() {
+      const requests = [];
+      const seenTargets = new Set();
+      this._forEachConfiguredButton((ent) => {
+        if (
+          ent.button_type !== "menu" ||
+          ent.menu_target_scope !== "external" ||
+          ent.menu_default !== true
+        ) return;
+        const targetCardId = String(ent.menu_target_card || "").trim();
+        const menuId = String(ent.menu_target || "").trim();
+        if (!targetCardId || !menuId || seenTargets.has(targetCardId)) return;
+        seenTargets.add(targetCardId);
+        requests.push({
+          owner: this._instanceToken,
+          requestKey: `${this._instanceToken}:${targetCardId}:${menuId}`,
+          sourceCardId: String(this._config?.card_id || "").trim(),
+          targetCardId,
+          menuId,
+          displayMode: "replace",
+          showBack: ent.menu_show_back === true,
+          showClose: false,
+        });
+      });
+      return requests;
+    }
+
+    _publishDefaultExternalNavigations() {
+      const store = this._navigationDefaultStore();
+      const requests = this._defaultExternalMenuRequests();
+      const activeTargets = new Set(requests.map((request) => request.targetCardId));
+
+      for (const oldTarget of this._publishedDefaultTargets || []) {
+        if (!activeTargets.has(oldTarget) && store[oldTarget]?.owner === this._instanceToken) {
+          delete store[oldTarget];
+        }
+      }
+
+      requests.forEach((request) => {
+        const changed = store[request.targetCardId]?.requestKey !== request.requestKey;
+        store[request.targetCardId] = request;
+        if (changed) fireEvent(window, NAVIGATE_EVENT, request);
+      });
+      this._publishedDefaultTargets = activeTargets;
+    }
+
+    _clearPublishedDefaultNavigations() {
+      const store = this._navigationDefaultStore();
+      for (const targetCardId of this._publishedDefaultTargets || []) {
+        if (store[targetCardId]?.owner === this._instanceToken) delete store[targetCardId];
+      }
+      this._publishedDefaultTargets = new Set();
+    }
+
+    _applyPendingExternalDefault() {
+      const ownCardId = String(this._config?.card_id || "").trim();
+      if (!ownCardId) return false;
+      const request = this._navigationDefaultStore()[ownCardId];
+      if (!request || request.requestKey === this._appliedExternalDefaultKey) return false;
+      const target = String(request.menuId || "").trim();
+      if (
+        target !== "__root__" &&
+        target !== "" &&
+        !this._findMenu(target)
+      ) return false;
+
+      this._resetMainMenu();
+      if (target && target !== "__root__" && target !== this._rootMenuId()) {
+        this._mainMenuStack.push({
+          id: target,
+          show_back: request.showBack === true,
+          show_close: false,
+        });
+      }
+      this._appliedExternalDefaultKey = request.requestKey;
+      return true;
+    }
+
+    _matchingExternalButtonKey(cardId, menuId, isRoot = false) {
+      let match = "";
+      this._forEachConfiguredButton((ent, key) => {
+        const target = String(ent.menu_target || "");
+        if (
+          !match &&
+          ent.button_type === "menu" &&
+          ent.menu_target_scope === "external" &&
+          String(ent.menu_target_card || "").trim() === String(cardId || "").trim() &&
+          (target === String(menuId || "") || (isRoot && target === "__root__"))
+        ) {
+          match = key;
+        }
+      });
+      return match;
+    }
+
+    _isExternalMenuButtonActive(entCfg) {
+      if (entCfg?.button_type !== "menu" || entCfg.menu_target_scope !== "external") return false;
+      const cardId = String(entCfg.menu_target_card || "").trim();
+      if (!cardId) return false;
+      const state = this._navigationStateStore()[cardId];
+      if (!state) return entCfg.menu_default === true;
+      const target = String(entCfg.menu_target || "");
+      return target === String(state.menuId || "") || (target === "__root__" && state.isRoot === true);
+    }
+
+    _setSelectedButton(key, entCfg, tile, menuId = "", rowCfg = null) {
+      const theme = this._resolveTheme(entCfg, menuId, rowCfg);
+      if (this._resolveButtonStyle(entCfg, theme) !== "flat") return;
+      this._selectedButtonKey = key || "";
+      this.shadowRoot?.querySelectorAll?.(".tile.is-selected").forEach((item) =>
+        item.classList.remove("is-selected")
+      );
+      tile?.classList?.add("is-selected");
+    }
+
+    _announceNavigationState() {
+      const cardId = String(this._config?.card_id || "").trim();
+      if (!cardId) return;
+      const popupEntry = this._popupMenuStack?.[this._popupMenuStack.length - 1];
+      const mainEntry = this._mainMenuStack?.[this._mainMenuStack.length - 1];
+      const menuId = popupEntry?.id ?? mainEntry?.id ?? this._rootMenuId();
+      const state = {
+        cardId,
+        menuId,
+        rootMenuId: this._rootMenuId(),
+        isRoot: !popupEntry && menuId === this._rootMenuId(),
+        displayMode: popupEntry ? "popup" : "replace",
+      };
+      this._navigationStateStore()[cardId] = state;
+      fireEvent(window, NAVIGATION_STATE_EVENT, state);
+    }
+
+    _handleNavigationState(ev) {
+      const detail = ev?.detail || {};
+      const cardId = String(detail.cardId || "").trim();
+      if (!cardId) return;
+      this._navigationStateStore()[cardId] = {
+        cardId,
+        menuId: detail.menuId || "",
+        rootMenuId: detail.rootMenuId || "",
+        isRoot: detail.isRoot === true,
+        displayMode: detail.displayMode || "replace",
+      };
+      const key = this._matchingExternalButtonKey(cardId, detail.menuId, detail.isRoot === true);
+      if (key === this._selectedButtonKey) return;
+      if (!key && this._selectedButtonKey) {
+        let selectedIsForCard = false;
+        this._forEachConfiguredButton((ent, buttonKey) => {
+          if (
+            buttonKey === this._selectedButtonKey &&
+            ent.menu_target_scope === "external" &&
+            String(ent.menu_target_card || "").trim() === cardId
+          ) {
+            selectedIsForCard = true;
+          }
+        });
+        if (!selectedIsForCard) return;
+      }
+      this._selectedButtonKey = key;
+      if (this.shadowRoot) this._render();
+    }
+
+    _handleExternalNavigation(ev) {
+      const detail = ev?.detail || {};
+      const ownCardId = String(this._config?.card_id || "").trim();
+      if (!ownCardId || String(detail.targetCardId || "").trim() !== ownCardId) return;
+      if (detail.requestKey) this._appliedExternalDefaultKey = detail.requestKey;
+      const target = detail.menuId || "";
+      if (target === "__back__") {
+        this._goBackMenu();
+        return;
+      }
+      if (target === "__root__" || target === "") {
+        this._resetMainMenu();
+        this._render();
+        this._announceNavigationState();
+        return;
+      }
+      if (!this._findMenu(target)) {
+        console.warn(`Andy Quickboard: menu "${target}" was not found in card "${ownCardId}".`);
+        return;
+      }
+      const displayMode = detail.displayMode || "replace";
+      if (displayMode !== "popup") {
+        this._resetMainMenu();
+        if (target === this._rootMenuId()) {
+          this._render();
+          this._announceNavigationState();
+          return;
+        }
+      }
+      this._openMenuTarget(target, {
+        displayMode,
+        showBack: detail.showBack === true,
+        showClose: detail.showClose === true,
+      });
+    }
+
     _menuRows(menuId) {
+      if (menuId === "__root__") menuId = this._rootMenuId();
       if (!menuId) return this._config?.rows || [];
       return this._findMenu(menuId)?.rows || [];
     }
 
     _menuTitle(menuId) {
       if (menuId === "__back__") return "Back";
-      if (menuId === "__root__") return this._config?.title || "Main menu";
+      if (menuId === "__root__") {
+        const rootMenuId = this._rootMenuId();
+        return rootMenuId ? this._menuTitle(rootMenuId) : (this._config?.title || "Main menu");
+      }
       if (!menuId) return this._config?.title || "";
       const menu = this._findMenu(menuId);
       return menu?.title || menu?.name || menuId;
@@ -244,7 +637,7 @@ if (!customElements.get(CARD_TAG)) {
       let total = 0;
       this._menuRows(menuId).forEach((row) => {
         (row.entities || []).forEach((item) => {
-          if (item.button_type === "menu" && item.menu_target && !String(item.menu_target).startsWith("__")) {
+          if (item.button_type === "menu" && item.menu_target_scope !== "external" && item.menu_target && !String(item.menu_target).startsWith("__")) {
             const nested = this._collectMenuStats(item.menu_target, visited, countedEntities);
             active += nested.active;
             total += nested.total;
@@ -262,6 +655,9 @@ if (!customElements.get(CARD_TAG)) {
 
     _resolveTileState(entCfg) {
       const entityId = entCfg?.entity || "";
+      if (entCfg?.button_type === "navigation") {
+        return { entityId: "", stateObj: undefined, menuStats: null };
+      }
       if (entCfg?.button_type !== "menu") {
         return {
           entityId,
@@ -270,14 +666,14 @@ if (!customElements.get(CARD_TAG)) {
         };
       }
 
-      const statusMode = entCfg.menu_state_mode || (entityId ? "entity" : "auto");
+      const statusMode = entCfg.menu_state_mode || "none";
       if (statusMode === "none") {
         return { entityId, stateObj: undefined, menuStats: null };
       }
-      if (statusMode === "entity" && entityId) {
+      if (statusMode === "entity") {
         return {
           entityId,
-          stateObj: this._hass?.states?.[entityId],
+          stateObj: entityId ? this._hass?.states?.[entityId] : undefined,
           menuStats: null,
         };
       }
@@ -295,7 +691,9 @@ if (!customElements.get(CARD_TAG)) {
         };
       }
 
-      const stats = this._collectMenuStats(entCfg.menu_target || "");
+      const stats = entCfg.menu_target_scope === "external"
+        ? { active: 0, total: 0 }
+        : this._collectMenuStats(entCfg.menu_target || "");
       return {
         entityId,
         stateObj: {
@@ -314,23 +712,43 @@ if (!customElements.get(CARD_TAG)) {
       ev?.stopPropagation?.();
       const target = entCfg?.menu_target || "";
       if (!target) return;
+      if (entCfg?.menu_target_scope === "external") {
+        const targetCardId = String(entCfg.menu_target_card || "").trim();
+        if (!targetCardId) return;
+        fireEvent(window, NAVIGATE_EVENT, {
+          sourceCardId: String(this._config?.card_id || "").trim(),
+          targetCardId,
+          menuId: target,
+          displayMode: entCfg.menu_display || "replace",
+          showBack: entCfg.menu_show_back === true,
+          showClose: (entCfg.menu_display || "replace") === "popup" || entCfg.menu_show_close === true,
+        });
+        return;
+      }
       if (target === "__back__") {
         this._goBackMenu();
         return;
       }
       if (target === "__root__") {
-        if (this._popupMenuStack.length) this._popupMenuStack = [];
-        this._mainMenuStack = [{ id: "", show_back: false, show_close: false }];
+        this._resetMainMenu();
         this._render();
+        this._announceNavigationState();
         return;
       }
       if (!this._findMenu(target)) return;
 
-      const displayMode = entCfg.menu_display || "replace";
+      this._openMenuTarget(target, {
+        displayMode: entCfg.menu_display || "replace",
+        showBack: entCfg.menu_show_back === true,
+        showClose: entCfg.menu_show_close === true,
+      });
+    }
+
+    _openMenuTarget(target, { displayMode = "replace", showBack = false, showClose = false } = {}) {
       const entry = {
         id: target,
-        show_back: entCfg.menu_show_back === true,
-        show_close: displayMode === "popup" || entCfg.menu_show_close === true,
+        show_back: showBack,
+        show_close: displayMode === "popup" || showClose,
       };
       if (displayMode === "popup") {
         this._popupMenuStack.push(entry);
@@ -340,6 +758,7 @@ if (!customElements.get(CARD_TAG)) {
         this._mainMenuStack.push(entry);
       }
       this._render();
+      this._announceNavigationState();
     }
 
     _goBackMenu() {
@@ -349,19 +768,40 @@ if (!customElements.get(CARD_TAG)) {
         this._mainMenuStack.pop();
       }
       this._render();
+      this._announceNavigationState();
     }
 
     _closeMenu() {
       if (this._popupMenuStack.length) {
         this._popupMenuStack = [];
       } else {
-        this._mainMenuStack = [{ id: "", show_back: false, show_close: false }];
+        this._resetMainMenu();
       }
       this._render();
+      this._announceNavigationState();
     }
 
-    _handlePrimaryAction(ev, entityId, entCfg, sourceMenuId = "") {
+    _handlePrimaryAction(ev, entityId, entCfg, sourceMenuId = "", buttonKey = "", tile = null, rowCfg = null) {
       ev.stopPropagation();
+      if (
+        entCfg?.button_type === "menu" &&
+        (
+          !entCfg.menu_target ||
+          (entCfg.menu_target_scope === "external" && !String(entCfg.menu_target_card || "").trim()) ||
+          (
+            entCfg.menu_target_scope !== "external" &&
+            !String(entCfg.menu_target).startsWith("__") &&
+            !this._findMenu(entCfg.menu_target)
+          )
+        )
+      ) {
+        return;
+      }
+      this._setSelectedButton(buttonKey, entCfg, tile, sourceMenuId, rowCfg);
+      if (entCfg?.button_type === "navigation") {
+        this._handleNavigationButtonAction(entCfg);
+        return;
+      }
       if (entCfg?.button_type === "menu") {
         this._handleMenuAction(ev, entCfg);
         return;
@@ -374,6 +814,17 @@ if (!customElements.get(CARD_TAG)) {
         this._handleDefaultAction(entityId);
       }
       this._handleMenuActionAfterTap(entCfg, sourceMenuId);
+    }
+
+    _handleNavigationButtonAction(entCfg) {
+      const navigationPath = String(entCfg?.navigation_path || "").trim();
+      if (!navigationPath) return;
+      if (entCfg.navigation_replace === true && typeof window.history?.replaceState === "function") {
+        window.history.replaceState(null, "", navigationPath);
+      } else {
+        window.history.pushState(null, "", navigationPath);
+      }
+      fireEvent(window, "location-changed");
     }
 
     _handleMenuActionAfterTap(entCfg, sourceMenuId = "") {
@@ -431,7 +882,11 @@ if (!customElements.get(CARD_TAG)) {
           break;
         case "navigate":
           if (tapAction.navigation_path) {
-            window.history.pushState(null, "", tapAction.navigation_path);
+            if (tapAction.navigation_replace === true && typeof window.history?.replaceState === "function") {
+              window.history.replaceState(null, "", tapAction.navigation_path);
+            } else {
+              window.history.pushState(null, "", tapAction.navigation_path);
+            }
             fireEvent(window, "location-changed");
           }
           break;
@@ -566,9 +1021,15 @@ if (!customElements.get(CARD_TAG)) {
       const wrapper = document.createElement("div");
       wrapper.classList.add("wrapper");
 
-      const mainEntry = this._mainMenuStack[this._mainMenuStack.length - 1] || {
-        id: "", show_back: false, show_close: false,
-      };
+      const mainEntry = this._mainMenuStack[this._mainMenuStack.length - 1] || this._rootMenuEntry();
+      const mainIsFlatRail =
+        this._isFlatRailMenu(mainEntry.id || "") &&
+        !mainEntry.show_back &&
+        !mainEntry.show_close;
+      if (mainIsFlatRail) {
+        haCard.classList.add("flat-rail-card");
+        wrapper.classList.add("flat-rail-view");
+      }
       this._renderMenuView(wrapper, mainEntry, false);
       haCard.appendChild(wrapper);
 
@@ -601,11 +1062,19 @@ if (!customElements.get(CARD_TAG)) {
     _renderMenuView(container, entry, isPopup) {
       const menuId = entry?.id || "";
       const title = this._menuTitle(menuId);
+      const resolvedMenuId = menuId === "__root__" ? this._rootMenuId() : menuId;
+      const menuConfig = resolvedMenuId ? this._findMenu(resolvedMenuId) : null;
+      const showTitle = menuConfig ? menuConfig.show_title !== false : true;
       const showClose = isPopup || entry?.show_close;
-      if (title || entry?.show_back || showClose) {
+      const isFlatRail =
+        !isPopup &&
+        this._isFlatRailMenu(menuId) &&
+        !entry?.show_back &&
+        !showClose;
+      if (!isFlatRail && ((showTitle && title) || entry?.show_back || showClose)) {
         const header = document.createElement("div");
         header.classList.add("menu-view-header");
-        if (title) {
+        if (showTitle && title) {
           const titleEl = document.createElement("div");
           titleEl.classList.add("card-title");
           titleEl.textContent = title;
@@ -626,6 +1095,7 @@ if (!customElements.get(CARD_TAG)) {
       const rowsContainer = document.createElement("div");
       rowsContainer.classList.add("menu-rows");
       if (isPopup) rowsContainer.classList.add("popup-rows");
+      if (isFlatRail) rowsContainer.classList.add("flat-rail-menu");
       this._menuRows(menuId).forEach((row, rowIdx) => {
         const rowWrapper = document.createElement("div");
         rowWrapper.classList.add("row-wrapper");
@@ -639,9 +1109,19 @@ if (!customElements.get(CARD_TAG)) {
         tilesRow.classList.add("tiles-row");
 
         (row.entities || []).forEach((entCfg, entIdx) => {
-          const tile = this._createTile(entCfg, menuId, row);
+          const buttonKey = this._buttonKey(menuId, rowIdx, entIdx);
+          const tile = this._createTile(entCfg, menuId, row, buttonKey);
           const slot = document.createElement("div");
           slot.classList.add("tile-slot");
+          if (tile.classList.contains("flat-layout-rail")) {
+            slot.classList.add("flat-rail-slot");
+            const configuredIconSize = Number(entCfg.icon_size);
+            const railSize = Math.max(
+              48,
+              (Number.isFinite(configuredIconSize) && configuredIconSize > 0 ? configuredIconSize : 20) + 20
+            );
+            slot.style.setProperty("--flat-rail-size", `${railSize}px`);
+          }
           const hoverKey = `${isPopup ? "popup" : "main"}:${menuId || "root"}:${rowIdx}:${entIdx}`;
           slot.dataset.hoverKey = hoverKey;
           slot.addEventListener("pointerenter", () => {
@@ -833,21 +1313,63 @@ if (!customElements.get(CARD_TAG)) {
       return res;
     }
 
-    _createTile(entCfg, menuId = "", rowCfg = null) {
+    _createTile(entCfg, menuId = "", rowCfg = null, buttonKey = "") {
       const tile = document.createElement("div");
       tile.classList.add("tile");
 
       const theme = this._resolveTheme(entCfg, menuId, rowCfg);
+      const buttonStyle = this._resolveButtonStyle(entCfg, theme);
+      tile.classList.add(`button-style-${buttonStyle}`);
+      const isFlatRail =
+        buttonStyle === "flat" &&
+        (this._config?.flat_layout || "rail") === "rail";
+      if (isFlatRail) tile.classList.add("flat-layout-rail");
+      if (
+        buttonStyle === "flat" &&
+        (
+          this._selectedButtonKey === buttonKey ||
+          (entCfg.button_type === "navigation" && this._isNavigationButtonActive(entCfg, menuId)) ||
+          this._isExternalMenuButtonActive(entCfg)
+        )
+      ) {
+        tile.classList.add("is-selected");
+      }
       this._applyBoxStyle(tile, theme);
 
       const { entityId, stateObj, menuStats } = this._resolveTileState(entCfg);
+      const hideButtonStatus =
+        entCfg.button_type === "navigation" ||
+        (entCfg.button_type === "menu" && (entCfg.menu_state_mode || "none") === "none");
+      const showTileLabel = entCfg.show_label !== false;
+      const showTileState = entCfg.show_state !== false && !hideButtonStatus;
 
       const colorInfo = this._getColorForState(stateObj, entCfg, theme);
-      if (colorInfo.background) tile.style.background = colorInfo.background;
-      if (colorInfo.text_color) tile.style.color = colorInfo.text_color;
-      this._applyShadowStyle(tile, entCfg, theme, colorInfo);
+      if (buttonStyle === "flat") {
+        tile.style.setProperty(
+          "--flat-selected-background",
+          colorInfo.background || "color-mix(in srgb, var(--primary-color, #03a9f4) 22%, transparent)"
+        );
+        tile.style.setProperty(
+          "--flat-selected-text",
+          colorInfo.text_color || "var(--primary-text-color)"
+        );
+        tile.style.setProperty(
+          "--flat-accent-color",
+          colorInfo.active_color || "var(--primary-color, #03a9f4)"
+        );
+        tile.style.setProperty(
+          "--flat-rail-selected-background",
+          `color-mix(in srgb, ${colorInfo.active_color || "var(--primary-color, #03a9f4)"} 24%, var(--card-background-color, #1c1c1c))`
+        );
+        tile.style.boxShadow = "none";
+      } else {
+        if (colorInfo.background) tile.style.background = colorInfo.background;
+        if (colorInfo.text_color) tile.style.color = colorInfo.text_color;
+        this._applyShadowStyle(tile, entCfg, theme, colorInfo);
+      }
 
-      const valueStr = stateObj ? stateObj.state : "—";
+      const missingStateText = entityId ? "Unavailable" : "No entity";
+      const valueStr = stateObj ? stateObj.state : missingStateText;
       const unit = entCfg.unit !== undefined
         ? entCfg.unit
         : (stateObj && (stateObj.attributes.unit_of_measurement || ""));
@@ -858,9 +1380,9 @@ if (!customElements.get(CARD_TAG)) {
           ? this._resolveSuffix(colorInfo.suffix_text, stateObj, entityId, unit)
           : "";
 
-      if (entityId || entCfg.button_type === "menu") {
+      if (entityId || entCfg.button_type === "menu" || entCfg.button_type === "navigation") {
         tile.addEventListener("click", (ev) =>
-          this._handlePrimaryAction(ev, entityId, entCfg, menuId)
+          this._handlePrimaryAction(ev, entityId, entCfg, menuId, buttonKey, tile, rowCfg)
         );
       }
 
@@ -878,6 +1400,11 @@ if (!customElements.get(CARD_TAG)) {
       // Resolve show_icon: per-entity overrides global; global defaults to true
       const globalShowIcon = this._config.show_icon !== false;
       const showTileIcon = entCfg.show_icon !== undefined ? entCfg.show_icon !== false : globalShowIcon;
+      if (!showTileLabel) tile.classList.add("hide-label");
+      if (!showTileState) tile.classList.add("hide-state");
+      if (showTileIcon && !showTileLabel && !showTileState) {
+        tile.classList.add("icon-only");
+      }
 
       let iconName = "";
       if (showTileIcon) {
@@ -910,32 +1437,54 @@ if (!customElements.get(CARD_TAG)) {
           iconEl.setAttribute("icon", iconName);
         } else if (entCfg.button_type === "menu") {
           iconEl.setAttribute("icon", "mdi:view-grid-plus-outline");
+        } else if (entCfg.button_type === "navigation") {
+          iconEl.setAttribute("icon", "mdi:view-dashboard-outline");
         } else if (entityId) {
           iconEl.setAttribute("icon", "mdi:thermometer");
         }
 
         iconEl.classList.add("tile-icon");
+        const iconSize = Number(entCfg.icon_size);
+        if (Number.isFinite(iconSize) && iconSize > 0) {
+          iconEl.style.width = `${iconSize}px`;
+          iconEl.style.height = `${iconSize}px`;
+          iconEl.style.setProperty("--mdc-icon-size", `${iconSize}px`);
+        }
         iconNameRow.appendChild(iconEl);
       }
 
-      const nameEl = document.createElement("div");
-      nameEl.classList.add("tile-name");
-      nameEl.textContent =
+      const buttonLabel =
         entCfg.name ||
-        (entCfg.button_type === "menu" ? this._menuTitle(entCfg.menu_target) : "") ||
+        (entCfg.button_type === "menu"
+          ? (entCfg.menu_target_scope === "external"
+            ? entCfg.menu_target || entCfg.menu_target_card || "Menu"
+            : this._menuTitle(entCfg.menu_target))
+          : entCfg.button_type === "navigation"
+            ? entCfg.navigation_path || "Page"
+          : "") ||
         (stateObj ? stateObj.attributes.friendly_name || entityId : entityId);
-
-      const baseLabelRem = 1.0;
-      if (entCfg.label_font_size !== undefined && entCfg.label_font_size !== null) {
-        const scale = Number(entCfg.label_font_size);
-        if (!isNaN(scale) && scale > 0) {
-          nameEl.style.fontSize = `${baseLabelRem * scale}rem`;
-        } else if (entCfg.label_font_size) {
-          nameEl.style.fontSize = entCfg.label_font_size;
-        }
+      if (isFlatRail || !showTileLabel) {
+        tile.title = buttonLabel || "Quickboard button";
+        tile.setAttribute("aria-label", buttonLabel || "Quickboard button");
       }
 
-      iconNameRow.appendChild(nameEl);
+      if (showTileLabel) {
+        const nameEl = document.createElement("div");
+        nameEl.classList.add("tile-name");
+        nameEl.textContent = buttonLabel;
+
+        const baseLabelRem = 1.0;
+        if (entCfg.label_font_size !== undefined && entCfg.label_font_size !== null) {
+          const scale = Number(entCfg.label_font_size);
+          if (!isNaN(scale) && scale > 0) {
+            nameEl.style.fontSize = `${baseLabelRem * scale}rem`;
+          } else if (entCfg.label_font_size) {
+            nameEl.style.fontSize = entCfg.label_font_size;
+          }
+        }
+        iconNameRow.appendChild(nameEl);
+      }
+
       topRow.appendChild(iconNameRow);
       tile.appendChild(topRow);
 
@@ -973,11 +1522,10 @@ if (!customElements.get(CARD_TAG)) {
           valueEl.textContent = base;
         }
       } else {
-        valueEl.textContent = "—";
+        valueEl.textContent = missingStateText;
       }
 
-      const hideMenuStatus = entCfg.button_type === "menu" && entCfg.menu_state_mode === "none";
-      if (!hideMenuStatus) tile.appendChild(valueEl);
+      if (showTileState) tile.appendChild(valueEl);
 
       const badgeStyle = entCfg.badge_style && entCfg.badge_style !== "inherit"
         ? entCfg.badge_style
@@ -998,6 +1546,12 @@ if (!customElements.get(CARD_TAG)) {
 
           const bWrap = document.createElement("div");
           bWrap.classList.add("badge");
+          if (badgeCfg.font_size !== undefined && badgeCfg.font_size !== null && badgeCfg.font_size !== "") {
+            const badgeFontSize = Number(badgeCfg.font_size);
+            bWrap.style.fontSize = Number.isFinite(badgeFontSize) && badgeFontSize > 0
+              ? `${badgeFontSize}px`
+              : String(badgeCfg.font_size);
+          }
 
           switch (badgeStyle) {
             case "none":
@@ -1035,6 +1589,12 @@ if (!customElements.get(CARD_TAG)) {
             const iEl = document.createElement("ha-icon");
             iEl.setAttribute("icon", badgeIconName);
             iEl.classList.add("badge-icon");
+            const badgeIconSize = Number(badgeCfg.icon_size);
+            if (Number.isFinite(badgeIconSize) && badgeIconSize > 0) {
+              iEl.style.width = `${badgeIconSize}px`;
+              iEl.style.height = `${badgeIconSize}px`;
+              iEl.style.setProperty("--mdc-icon-size", `${badgeIconSize}px`);
+            }
             bWrap.appendChild(iEl);
           }
 
@@ -1250,9 +1810,20 @@ if (!customElements.get(CARD_TAG)) {
         tile.classList.add("has-button-type-mark");
         const typeMark = document.createElement("div");
         typeMark.classList.add("button-type-mark");
-        typeMark.title = entCfg.button_type === "menu" ? "Menu button" : "Entity button";
+        typeMark.title = entCfg.button_type === "menu"
+          ? "Menu button"
+          : entCfg.button_type === "navigation"
+            ? "Navigation button"
+            : "Entity button";
         const typeIcon = document.createElement("ha-icon");
-        typeIcon.setAttribute("icon", entCfg.button_type === "menu" ? "mdi:menu" : "mdi:flash-outline");
+        typeIcon.setAttribute(
+          "icon",
+          entCfg.button_type === "menu"
+            ? "mdi:menu"
+            : entCfg.button_type === "navigation"
+              ? "mdi:page-next-outline"
+              : "mdi:flash-outline"
+        );
         typeMark.appendChild(typeIcon);
         tile.appendChild(typeMark);
       }
@@ -1492,10 +2063,32 @@ if (!customElements.get(CARD_TAG)) {
         ha-card.quickboard-card {
           overflow: visible;
           position: relative;
+          background: var(
+            --andy-quickboard-card-background,
+            var(--ha-card-background, var(--card-background-color, #fff))
+          );
+        }
+        ha-card.quickboard-card.flat-rail-card {
+          width: max-content;
+          min-width: 60px;
+          margin-inline: auto;
+          border-radius: 24px;
+          background: var(
+            --andy-quickboard-card-background,
+            color-mix(
+              in srgb,
+              var(--primary-color, #03a9f4) 7%,
+              var(--ha-card-background, var(--card-background-color, #1c1c1c))
+            )
+          );
+          box-shadow: 0 6px 18px rgba(0,0,0,.22);
         }
         .wrapper {
           padding: 16px;
           box-sizing: border-box;
+        }
+        .wrapper.flat-rail-view {
+          padding: 6px;
         }
         .card-title {
           font-weight: 600;
@@ -1561,6 +2154,15 @@ if (!customElements.get(CARD_TAG)) {
         .row-wrapper {
           margin-bottom: 12px;
         }
+        .flat-rail-menu .row-wrapper {
+          margin-bottom: 4px;
+        }
+        .flat-rail-menu .row-wrapper:last-child {
+          margin-bottom: 0;
+        }
+        .flat-rail-menu .row-label {
+          display: none;
+        }
         .row-label {
           font-size: 0.9rem;
           font-weight: 500;
@@ -1585,6 +2187,15 @@ if (!customElements.get(CARD_TAG)) {
           min-width: 0;
           display: flex;
         }
+        .flat-rail-menu .tiles-row {
+          gap: 4px;
+        }
+        .flat-rail-menu .tiles-row > .tile-slot.flat-rail-slot {
+          flex: 0 0 var(--flat-rail-size, 48px);
+          width: var(--flat-rail-size, 48px);
+          min-width: var(--flat-rail-size, 48px);
+          justify-content: center;
+        }
         .tile-slot > .tile {
           flex: 1 1 auto;
           min-width: 0;
@@ -1600,6 +2211,124 @@ if (!customElements.get(CARD_TAG)) {
           box-shadow: 0 4px 10px rgba(0,0,0,0.25);
           cursor: pointer;
           transition: transform 0.12s ease, box-shadow 0.12s ease, filter 0.1s ease;
+        }
+        .tile.button-style-flat {
+          min-height: 48px;
+          display: flex;
+          align-items: center;
+          flex-wrap: wrap;
+          column-gap: 12px;
+          row-gap: 5px;
+          border: 0 !important;
+          border-radius: 10px !important;
+          background: transparent !important;
+          color: var(--primary-text-color) !important;
+          box-shadow: none !important;
+          transition: background-color .14s ease, color .14s ease, filter .1s ease;
+        }
+        .tile.button-style-flat::before {
+          content: "";
+          position: absolute;
+          left: 0;
+          top: 10px;
+          bottom: 10px;
+          width: 3px;
+          border-radius: 999px;
+          background: var(--flat-accent-color, var(--primary-color, #03a9f4));
+          opacity: 0;
+          transform: scaleY(.4);
+          transition: opacity .14s ease, transform .14s ease;
+        }
+        .tile.button-style-flat.is-selected {
+          background: var(--flat-selected-background) !important;
+          color: var(--flat-selected-text) !important;
+        }
+        .tile.button-style-flat.is-selected::before {
+          opacity: 1;
+          transform: scaleY(1);
+        }
+        .tile.button-style-flat .tile-top-row {
+          flex: 1 1 auto;
+          min-width: 0;
+        }
+        .tile.button-style-flat .tile-value {
+          margin: 0 0 0 auto;
+          font-size: .95rem;
+          line-height: 1.2;
+        }
+        .tile.button-style-flat .badges-row {
+          flex-basis: 100%;
+          margin-top: 2px;
+          padding-left: 30px;
+        }
+        .tile.hide-label .tile-top-row,
+        .tile.hide-label .tile-icon-name-row {
+          width: 100%;
+          justify-content: center;
+        }
+        .tile.hide-label .tile-value {
+          width: 100%;
+          text-align: center;
+        }
+        .tile.button-style-flat.hide-label .tile-value {
+          margin: 0 auto;
+        }
+        .tile.button-style-flat.hide-label .badges-row {
+          width: 100%;
+          padding-left: 0;
+          justify-content: center;
+        }
+        .tile.icon-only {
+          min-height: 48px;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+        }
+        .tile.icon-only .tile-top-row,
+        .tile.icon-only .tile-icon-name-row {
+          width: 100%;
+          justify-content: center;
+        }
+        .tile.icon-only .tile-icon {
+          margin: 0;
+        }
+        .tile.button-style-flat.icon-only {
+          flex-wrap: nowrap;
+          column-gap: 0;
+          row-gap: 0;
+        }
+        .tile.icon-only.has-button-type-mark .tile-top-row {
+          padding-right: 0;
+        }
+        .tile.button-style-flat.flat-layout-rail {
+          flex: 0 0 var(--flat-rail-size, 48px) !important;
+          width: var(--flat-rail-size, 48px) !important;
+          min-width: var(--flat-rail-size, 48px) !important;
+          min-height: var(--flat-rail-size, 48px);
+          padding: 0 !important;
+          justify-content: center;
+          border-radius: 14px !important;
+        }
+        .tile.button-style-flat.flat-layout-rail::before {
+          display: none;
+        }
+        .tile.button-style-flat.flat-layout-rail.is-selected {
+          background: var(--flat-rail-selected-background) !important;
+        }
+        .tile.button-style-flat.flat-layout-rail .tile-top-row,
+        .tile.button-style-flat.flat-layout-rail .tile-icon-name-row {
+          width: 100%;
+          flex: 1 1 100%;
+          justify-content: center;
+        }
+        .tile.button-style-flat.flat-layout-rail .tile-name,
+        .tile.button-style-flat.flat-layout-rail .tile-value,
+        .tile.button-style-flat.flat-layout-rail .badges-row {
+          display: none;
+        }
+        .tile.button-style-flat.flat-layout-rail .tile-icon {
+          margin: 0;
         }
         .button-type-mark {
           position: absolute;
@@ -1626,9 +2355,26 @@ if (!customElements.get(CARD_TAG)) {
           line-height: 9px;
         }
         .tile.has-button-type-mark .tile-top-row { padding-right: 8px; }
-        .tile-slot:hover > .tile,
-        .tile.hover-continuity {
+        .tile-slot:hover > .tile:not(.button-style-flat),
+        .tile.hover-continuity:not(.button-style-flat) {
           filter: brightness(1.15);
+        }
+        .tile-slot:hover > .tile.button-style-flat {
+          background: color-mix(in srgb, var(--flat-accent-color, var(--primary-color, #03a9f4)) 10%, transparent) !important;
+        }
+        .tile-slot:hover > .tile.button-style-flat.is-selected {
+          background: var(--flat-selected-background) !important;
+          filter: brightness(1.08);
+        }
+        .tile-slot:hover > .tile.button-style-flat.flat-layout-rail {
+          background: color-mix(
+            in srgb,
+            var(--flat-accent-color, var(--primary-color, #03a9f4)) 11%,
+            transparent
+          ) !important;
+        }
+        .tile-slot:hover > .tile.button-style-flat.flat-layout-rail.is-selected {
+          background: var(--flat-rail-selected-background) !important;
         }
         .tile-slot > .tile:active {
           filter: brightness(0.85);
@@ -1637,8 +2383,8 @@ if (!customElements.get(CARD_TAG)) {
           transition: none;
         }
         ${this._config && this._config.hover_motion !== false ? `
-        .tile-slot:hover > .tile,
-        .tile.hover-continuity {
+        .tile-slot:hover > .tile:not(.button-style-flat),
+        .tile.hover-continuity:not(.button-style-flat) {
           transform: translateY(-2px);
           box-shadow: 0 6px 14px rgba(0,0,0,0.35);
         }` : ``}
@@ -1754,15 +2500,23 @@ if (!customElements.get(EDITOR_TAG)) {
       return {
         hass: {},
         _config: {},
+        _pendingDelete: {},
       };
     }
 
     constructor() {
       super();
       this._config = {};
+      this._pendingDelete = null;
     }
 
     setConfig(config) {
+      const cloned = this._cloneConfig(config || {});
+      const generatedCardId = !String(cloned.card_id || "").trim();
+      const migratedDefaultMenu =
+        !Object.prototype.hasOwnProperty.call(cloned, "default_menu_id") &&
+        !(cloned.rows || []).length &&
+        (cloned.menus || []).length > 0;
       this._config = {
         color_intervals: [],
         box_style: {},
@@ -1771,11 +2525,38 @@ if (!customElements.get(EDITOR_TAG)) {
         button_themes: [],
         default_theme_id: "",
         main_menu_theme_id: "",
+        default_menu_id: "",
         show_button_type_indicator: false,
         badge_style: "pill",
+        button_style: "raised",
+        flat_layout: "rail",
         dimmer_slider_color: "#FFFFFF",
-        ...config,
+        ...cloned,
+        card_id: String(cloned.card_id || "").trim() || createQuickboardCardId(),
+        default_menu_id: migratedDefaultMenu
+          ? cloned.menus[0].id
+          : (cloned.default_menu_id || ""),
       };
+      if (generatedCardId || migratedDefaultMenu) {
+        const migratedConfig = this._config;
+        Promise.resolve().then(() => {
+          if (this._config === migratedConfig) this._emitConfigChanged();
+        });
+      }
+    }
+
+    _cloneConfig(config) {
+      if (!config || typeof config !== "object") return {};
+      if (typeof structuredClone === "function") {
+        try {
+          return structuredClone(config);
+        } catch (_) {}
+      }
+      try {
+        return JSON.parse(JSON.stringify(config));
+      } catch (_) {
+        return { ...config };
+      }
     }
 
     _rowsForScope(menuId = "") {
@@ -1803,9 +2584,28 @@ if (!customElements.get(EDITOR_TAG)) {
       return {
         button_type: "entity",
         entity: "", icon: "", icon_mode: "single", icon_states: [],
-        name: "", value_font_size: 1.0, label_font_size: 1.0,
+        name: "", icon_size: 20, value_font_size: 1.0, label_font_size: 1.0,
+        show_label: true, show_state: true,
+        button_style: "inherit",
+        menu_state_mode: "none",
+        navigation_path: "", active_path_match: "exact", navigation_default: false,
         color_mode: "interval", color_from: "", color_to: "", badges: [],
       };
+    }
+
+    _duplicateButton(rowIdx, entIdx, menuId = "") {
+      const entities = this._rowsForScope(menuId)?.[rowIdx]?.entities;
+      const source = entities?.[entIdx];
+      if (!Array.isArray(entities) || !source) return;
+      entities.splice(entIdx + 1, 0, this._cloneConfig(source));
+      this._emitConfigChanged();
+    }
+
+    _duplicateBadge(badges, bIdx) {
+      const source = badges?.[bIdx];
+      if (!Array.isArray(badges) || !source) return;
+      badges.splice(bIdx + 1, 0, this._cloneConfig(source));
+      this._emitConfigChanged();
     }
 
     _newRow() {
@@ -1844,6 +2644,7 @@ if (!customElements.get(EDITOR_TAG)) {
         shadow_color_mode: "active",
         shadow_color: "#FF9800",
         badge_style: "inherit",
+        button_style: "inherit",
       };
     }
 
@@ -1919,7 +2720,21 @@ if (!customElements.get(EDITOR_TAG)) {
     }
 
     _emitConfigChanged() {
-      fireEvent(this, "config-changed", { config: this._config });
+      const snapshot = this._cloneConfig(this._config);
+      this.requestUpdate();
+      fireEvent(this, "config-changed", { config: snapshot });
+    }
+
+    async _copyQuickboardCardId() {
+      const cardId = String(this._config?.card_id || "").trim();
+      if (!cardId) return;
+      try {
+        if (typeof globalThis.navigator?.clipboard?.writeText !== "function") throw new Error("Clipboard unavailable");
+        await globalThis.navigator.clipboard.writeText(cardId);
+        fireEvent(this, "hass-notification", { message: "Quickboard card ID copied" });
+      } catch (_) {
+        if (typeof window.prompt === "function") window.prompt("Copy Quickboard card ID", cardId);
+      }
     }
 
     _ensureBoxStyle() {
@@ -1930,9 +2745,50 @@ if (!customElements.get(EDITOR_TAG)) {
       ev.stopPropagation();
     }
 
-    _confirmDelete(item, details = "") {
-      const message = `Delete ${item}?${details ? `\n\n${details}` : ""}\n\nThis cannot be undone.`;
-      return window.confirm(message);
+    _requestDelete(item, details, action) {
+      this._pendingDelete = {
+        item,
+        details: details || "",
+        action,
+      };
+      this.requestUpdate();
+    }
+
+    _cancelDelete(ev) {
+      ev?.stopPropagation?.();
+      this._pendingDelete = null;
+      this.requestUpdate();
+    }
+
+    _confirmPendingDelete(ev) {
+      ev?.stopPropagation?.();
+      const pending = this._pendingDelete;
+      this._pendingDelete = null;
+      if (typeof pending?.action === "function") pending.action();
+      this.requestUpdate();
+    }
+
+    _renderDeleteConfirmation() {
+      if (!this._pendingDelete) return "";
+      return html`
+        <div class="editor-confirm-backdrop" role="presentation" @click=${(e) => this._cancelDelete(e)}>
+          <div class="editor-confirm-dialog" role="alertdialog" aria-modal="true"
+            aria-labelledby="quickboard-confirm-title" @click=${this._stopPropagation}>
+            <ha-icon icon="mdi:alert-outline"></ha-icon>
+            <div class="editor-confirm-copy">
+              <div id="quickboard-confirm-title">Delete ${this._pendingDelete.item}?</div>
+              ${this._pendingDelete.details
+                ? html`<p>${this._pendingDelete.details}</p>`
+                : ""}
+              <small>This cannot be undone.</small>
+            </div>
+            <div class="editor-confirm-actions">
+              <ha-button @click=${(e) => this._cancelDelete(e)}>Cancel</ha-button>
+              <ha-button class="danger" @click=${(e) => this._confirmPendingDelete(e)}>Delete</ha-button>
+            </div>
+          </div>
+        </div>
+      `;
     }
 
     _selectOptions(options) {
@@ -2181,7 +3037,16 @@ if (!customElements.get(EDITOR_TAG)) {
       return html`
         <style>${this._css()}</style>
         <div class="editor-wrap">
-        <div class="editor-top-title">Andy Quickboard Card v1.2.1</div>
+        <div class="editor-top-title">
+          <div>Andy Quickboard Card v1.2.2</div>
+          <a class="editor-doc-link"
+             href="https://github.com/maglerod/andy-quickboard-card/blob/main/README.md"
+             target="_blank" rel="noopener noreferrer">
+            <ha-icon icon="mdi:book-open-page-variant-outline"></ha-icon>
+            Documentation, examples and setup guide
+          </a>
+        </div>
+        ${this._renderDeleteConfirmation()}
 
         <details class="section editor-section" open>
           <summary class="section-summary">${this._renderSectionTitle("mdi:tune-variant", "Basic")}</summary>
@@ -2196,6 +3061,10 @@ if (!customElements.get(EDITOR_TAG)) {
               this._emitConfigChanged();
             }}
           ></ha-selector>
+          ${this._renderFieldHelp(
+            "Number formatting",
+            "Sets the default number of decimal places shown on entity values. A button or badge can override this value."
+          )}
           <ha-selector
             .hass=${this.hass}
             .label=${"Decimal places (global default)"}
@@ -2206,6 +3075,40 @@ if (!customElements.get(EDITOR_TAG)) {
               this._emitConfigChanged();
             }}
           ></ha-selector>
+          <div class="conditional-settings-title">
+            <ha-icon icon="mdi:identifier"></ha-icon>
+            <div>
+              <b>Quickboard card ID</b>
+              <span>
+                Automatically generated and saved for this card. A Menu button in another Quickboard uses this ID
+                together with a Menu ID to open the correct menu here.
+              </span>
+            </div>
+          </div>
+          <div class="quickboard-id-box">
+            <code>${this._config.card_id}</code>
+            <ha-button @click=${() => this._copyQuickboardCardId()}>Copy card ID</ha-button>
+          </div>
+          <div class="conditional-settings-title">
+            <ha-icon icon="mdi:home-import-outline"></ha-icon>
+            <div>
+              <b>Initial content</b>
+              <span>
+                Select the menu shown before any Navbar button is pressed. Choose a menu to use Quickboard as a menu-only
+                content card; Main menu rows &amp; buttons may then remain empty.
+              </span>
+            </div>
+          </div>
+          ${this._renderSelect(
+            "Default displayed menu",
+            this._config.default_menu_id || "",
+            this._defaultMenuOptions(),
+            (value) => {
+              this._config.default_menu_id = value || "";
+              this.requestUpdate();
+              this._emitConfigChanged();
+            }
+          )}
           <div class="toggle-row">
             <span class="picker-label">Show icons (global default)</span>
             <ha-switch .checked=${this._config.show_icon !== false}
@@ -2221,6 +3124,24 @@ if (!customElements.get(EDITOR_TAG)) {
         <details class="section editor-section">
           <summary class="section-summary">${this._renderSectionTitle("mdi:palette-outline", "Appearance", `${(this._config.button_themes || []).length} theme${(this._config.button_themes || []).length === 1 ? "" : "s"}`)}</summary>
           <div class="section-body">
+          ${this._renderFieldHelp(
+            "Button style and Flat layout",
+            "Raised gives every button the classic card appearance. Flat is only a visual style and works with Entity, Menu and Navigation buttons. Compact icon rail creates the narrow vertical design; Full-width keeps icon and text visible on ordinary cards."
+          )}
+          ${this._renderSelect("Default button style", this._config.button_style || "raised",
+            [["raised","Raised (classic Quickboard)"],["flat","Flat"]],
+            (value) => {
+              this._config.button_style = value || "raised";
+              this._emitConfigChanged();
+            }
+          )}
+          ${this._renderSelect("Flat button layout", this._config.flat_layout || "rail",
+            [["rail","Compact icon rail"],["label","Full-width icon and label"]],
+            (value) => {
+              this._config.flat_layout = value || "rail";
+              this._emitConfigChanged();
+            }
+          )}
           <div class="three-col">
             <ha-selector
               .hass=${this.hass}
@@ -2256,6 +3177,10 @@ if (!customElements.get(EDITOR_TAG)) {
               }}
             ></ha-selector>
           </div>
+          ${this._renderFieldHelp(
+            "Default button shadow",
+            "Sets the shadow used when a theme or individual button does not override it. Strength controls opacity. The color source can follow Home Assistant, the active theme or matched color interval, a custom color, or classic black."
+          )}
           <div class="three-col">
             ${this._renderSelect("Default button shadow", this._shadowPresetFromCss(boxStyle.box_shadow),
               [["none","None"],["soft","Soft"],["medium","Medium"],["strong","Strong"],["glow","Glow"]],
@@ -2289,6 +3214,10 @@ if (!customElements.get(EDITOR_TAG)) {
           ${(boxStyle.shadow_color_mode || "ha") === "custom" ? html`
             ${this._renderShadowColorControl(boxStyle, "shadow_color", "Shadow color", "#FF9800")}
           ` : ""}
+          ${this._renderFieldHelp(
+            "Default badge style",
+            "Sets the appearance of badges unless a reusable theme or individual button selects another style. None keeps badge content but removes its decorative container."
+          )}
           ${this._renderSelect("Badge style", this._config.badge_style || "pill",
             [["pill","Pill"],["pill-strong","Pill strong"],["chip","Chip"],["underline","Underline"],["none","None"]],
             (v) => { this._config.badge_style = v || "pill"; this._emitConfigChanged(); }
@@ -2302,11 +3231,12 @@ if (!customElements.get(EDITOR_TAG)) {
               }}
             ></ha-switch>
           </div>
+          ${this._renderFieldHelp(
+            "Button-type symbol",
+            "The visual editor always shows a small symbol so Entity, Menu and Navigation buttons are easy to distinguish. Enable this only if the symbol should also appear on the live dashboard card."
+          )}
           <div class="toggle-row">
-            <div>
-              <div class="picker-label">Show button-type symbol on the live card</div>
-              <div class="inline-note">The Menu/Entity symbol is always visible in the visual editor.</div>
-            </div>
+            <div class="picker-label">Show button-type symbol on the live card</div>
             <ha-switch .checked=${this._config.show_button_type_indicator === true}
               @change=${(e) => {
                 this._config.show_button_type_indicator = e.target.checked;
@@ -2314,6 +3244,10 @@ if (!customElements.get(EDITOR_TAG)) {
               }}
             ></ha-switch>
           </div>
+          ${this._renderFieldHelp(
+            "Dimmer badge slider",
+            "Controls the slider accent color used by badges whose Badge type is Dimmer."
+          )}
           <div class="color-row">
             <input type="color" class="color-swatch"
               .value=${this._config.dimmer_slider_color || "#FFFFFF"}
@@ -2409,11 +3343,19 @@ if (!customElements.get(EDITOR_TAG)) {
                   </div>
                   ${this._renderShadowColorControl(interval, "shadow_color", "Active shadow color", interval.color_from || "#FF9800")}
                 </div>
+                ${this._renderFieldHelp(
+                  "Exact state matching",
+                  "Use Match state for non-numeric states such as on, off, home or playing. When filled in, this interval matches that exact state instead of the numeric From/To range."
+                )}
                 <ha-selector .hass=${this.hass} .label=${"Match state (optional, e.g. on, off)"}
                   .value=${interval.match_state || ""}
                   .selector=${{text: {}}}
                   @value-changed=${(e) => this._updateIntervalField(idx, "match_state", e.detail.value)}
                 ></ha-selector>
+                ${this._renderFieldHelp(
+                  "Displayed state text",
+                  "State label replaces the value shown on the button. Suffix text is appended to the value and may use the variables listed here: <state>, <unit>, <dimmer_pct>, <source>, <title>, <artist>, <album>, <title_artist>."
+                )}
                 <div class="two-col">
                   <ha-selector .hass=${this.hass} .label=${"State label (optional)"}
                     .value=${interval.state_text || ""}
@@ -2426,12 +3368,12 @@ if (!customElements.get(EDITOR_TAG)) {
                     @value-changed=${(e) => this._updateIntervalField(idx, "suffix_text", e.detail.value)}
                   ></ha-selector>
                 </div>
-                <div class="helper-text">Variables: &lt;state&gt; &lt;unit&gt; &lt;dimmer_pct&gt; &lt;source&gt; &lt;title&gt; &lt;artist&gt; &lt;album&gt; &lt;title_artist&gt;</div>
                 <div class="action-row">
                   <ha-button class="danger" @click=${() => {
-                    if (!this._confirmDelete(`global color interval ${idx + 1}`)) return;
-                    this._config.color_intervals.splice(idx, 1);
-                    this.requestUpdate(); this._emitConfigChanged();
+                    this._requestDelete(`global color interval ${idx + 1}`, "", () => {
+                      this._config.color_intervals.splice(idx, 1);
+                      this._emitConfigChanged();
+                    });
                   }}>Delete interval</ha-button>
                 </div>
               </div>
@@ -2458,7 +3400,10 @@ if (!customElements.get(EDITOR_TAG)) {
         <details class="section editor-section">
           <summary class="section-summary">${this._renderSectionTitle("mdi:view-grid-outline", "Main menu rows & buttons", `${rows.length} row${rows.length === 1 ? "" : "s"}`)}</summary>
           <div class="section-body">
-          <div class="section-note">Each expandable item below is a live-style preview of the button you are configuring.</div>
+          <div class="section-note">
+            Each expandable item below is a live-style preview of the button you are configuring.
+            This section may remain empty when a menu is selected under <b>Default displayed menu</b>.
+          </div>
           ${rows.map((row, rowIdx) => this._renderRow(row, rowIdx, ""))}
           <div class="action-row">
             <ha-button @click=${() => {
@@ -2547,6 +3492,10 @@ if (!customElements.get(EDITOR_TAG)) {
             <span>${theme.name || theme.id} — used by ${usage.length}</span>
           </div>
           <div class="expansion-content">
+            ${this._renderFieldHelp(
+              "Theme identity",
+              "Theme name is the friendly label shown in the editor. Theme ID is the internal reference used by menus, rows and buttons; renaming it updates existing links automatically."
+            )}
             <div class="three-col">
               <ha-selector .hass=${this.hass} .label=${"Theme name"}
                 .value=${theme.name || ""} .selector=${{text: {}}}
@@ -2571,7 +3520,15 @@ if (!customElements.get(EDITOR_TAG)) {
                 @value-changed=${(e) => { theme.border_width = Number(e.detail.value); this._emitConfigChanged(); }}></ha-selector>
               ${this._renderThemeColor(theme, "border_color", "Border color", "#FFFFFF")}
             </div>
+            ${this._renderFieldHelp(
+              "Theme behavior",
+              "Button style, shadow and badge style become reusable defaults wherever this theme is assigned. Inherit uses the corresponding global Appearance setting; Theme / active interval color lets a matched interval supply the shadow color."
+            )}
             <div class="four-col">
+              ${this._renderSelect("Button style", theme.button_style || "inherit",
+                [["inherit","Inherit global"],["raised","Raised"],["flat","Flat"]],
+                (value) => { theme.button_style = value || "inherit"; this._emitConfigChanged(); }
+              )}
               ${this._renderSelect("Box shadow", this._shadowPresetFromCss(theme.box_shadow),
                 [["none","None"],["soft","Soft"],["medium","Medium"],["strong","Strong"],["glow","Glow"]],
                 (value) => { theme.box_shadow = this._shadowCssFromPreset(value || "medium"); this._emitConfigChanged(); }
@@ -2601,12 +3558,13 @@ if (!customElements.get(EDITOR_TAG)) {
             <div class="action-row">
               <ha-button class="danger" @click=${() => {
                 const currentUsage = this._themeUsage(theme.id);
-                if (!this._confirmDelete(`theme “${theme.name || theme.id}”`,
-                  currentUsage.length ? `It is currently used by: ${currentUsage.join(", ")}. Those locations will return to inherited/button colors.` : "")) return;
-                this._clearThemeReferences(theme.id);
-                themes.splice(themeIdx, 1);
-                this.requestUpdate();
-                this._emitConfigChanged();
+                this._requestDelete(`theme “${theme.name || theme.id}”`,
+                  currentUsage.length ? `It is currently used by: ${currentUsage.join(", ")}. Those locations will return to inherited/button colors.` : "",
+                  () => {
+                    this._clearThemeReferences(theme.id);
+                    themes.splice(themeIdx, 1);
+                    this._emitConfigChanged();
+                  });
               }}>Delete theme</ha-button>
             </div>
           </div>
@@ -2695,6 +3653,11 @@ if (!customElements.get(EDITOR_TAG)) {
             Menus can be opened as a popup or replace the current menu. There is no fixed menu-depth limit;
             groups, notes, the menu index and usage references help keep larger structures manageable.
           </div>
+          <div class="helper-text">
+            For a dedicated content Quickboard, create all content here and select its starting menu under
+            <b>Basic → Default displayed menu</b>. If the card has no main rows, its first menu is selected automatically.
+            A separate Navbar can then open a specific Menu ID in this card.
+          </div>
           <details class="menu-help-details">
             <summary><ha-icon icon="mdi:help-circle-outline"></ha-icon><span>Setup guide &amp; menu help</span><small>Show instructions</small><ha-icon class="help-chevron" icon="mdi:chevron-down"></ha-icon></summary>
             <div class="menu-guide">
@@ -2704,6 +3667,8 @@ if (!customElements.get(EDITOR_TAG)) {
               <li><b>Choose the opening button:</b> Under <b>Main menu rows &amp; buttons</b>, open a button preview and change <b>Button type</b> to <b>Menu button</b>.</li>
               <li><b>Link it:</b> Select your new menu under <b>Destination</b>.</li>
               <li><b>Choose how it opens:</b> <b>Replace current menu</b> changes the contents inside the card; <b>Popup</b> opens the menu above the dashboard.</li>
+              <li><b>Control another Quickboard:</b> Copy the receiving card’s automatically generated <b>Quickboard card ID</b>. On a <b>Menu button</b>, choose <b>Another Quickboard card</b>, then paste that card ID and enter the destination Menu ID.</li>
+              <li><b>External default menu:</b> Enable <b>Default menu for target card</b> on one Navbar Menu button to show that destination automatically when the Navbar loads.</li>
               <li><b>Navigation controls:</b> <b>Back</b> is optional. <b>Close</b> is always shown for popups so they can never trap navigation; for an in-place menu it remains optional.</li>
               <li><b>After an entity tap:</b> Set the menuâ€™s <b>Action after tap</b> to stay, return one step or close the complete menu flow.</li>
               </ol>
@@ -2719,7 +3684,7 @@ if (!customElements.get(EDITOR_TAG)) {
               <div class="menu-index-title"><ha-icon icon="mdi:link-variant"></ha-icon> Menu index</div>
               <div class="menu-quicklinks">
                 ${menus.map((menu) => html`
-                  <button type="button" title=${`Open ${menu.title || menu.id} · used by ${this._menuUsage(menu.id).length} button(s)`}
+                  <button type="button" title=${`Open ${menu.title || menu.id} · ${this._menuUsage(menu.id).length} reference(s)`}
                     @click=${() => this._scrollToMenuEditor(menu.id)}>
                     <ha-icon icon="mdi:menu"></ha-icon>
                     <span>${menu.title || menu.id}</span>
@@ -2737,10 +3702,13 @@ if (!customElements.get(EDITOR_TAG)) {
           `)}
           <div class="action-row">
             <ha-button @click=${() => {
-              if (!Array.isArray(this._config.menus)) this._config.menus = [];
-              const id = this._makeMenuId();
-              this._config.menus.push({ id, title: `Menu ${this._config.menus.length + 1}`, description: "", group: "", theme_id: "", action_after_tap: "stay", rows: [] });
-              this.requestUpdate();
+               if (!Array.isArray(this._config.menus)) this._config.menus = [];
+               const id = this._makeMenuId();
+               this._config.menus.push({ id, title: `Menu ${this._config.menus.length + 1}`, show_title: true, description: "", group: "", theme_id: "", action_after_tap: "stay", rows: [] });
+               if (!(this._config.rows || []).length && !this._config.default_menu_id) {
+                 this._config.default_menu_id = id;
+               }
+               this.requestUpdate();
               this._emitConfigChanged();
             }}>Add menu</ha-button>
           </div>
@@ -2761,6 +3729,10 @@ if (!customElements.get(EDITOR_TAG)) {
       return html`
         <ha-expansion-panel id=${`menu-editor-${this._scopeKey(menu.id)}`} class="menu-editor-panel" .header=${header}>
           <div class="expansion-content menu-editor-content">
+            ${this._renderFieldHelp(
+              "Menu name and ID",
+              "The title identifies this menu in the editor and is used as its default button label. Show menu title controls whether it appears as a heading on the live card. Menu ID is the destination used by Menu buttons and external Quickboards; renaming it updates links inside this card automatically."
+            )}
             <div class="two-col">
               <ha-selector .hass=${this.hass} .label=${"Menu title"}
                 .value=${menu.title || ""}
@@ -2776,6 +3748,19 @@ if (!customElements.get(EDITOR_TAG)) {
                 @value-changed=${(e) => this._renameMenu(menuIdx, e.detail.value)}
               ></ha-selector>
             </div>
+            <div class="toggle-row compact-toggle menu-title-toggle">
+              <span class="picker-label">Show menu title on card</span>
+              <ha-switch .checked=${menu.show_title !== false}
+                @change=${(e) => {
+                  menus[menuIdx].show_title = e.target.checked;
+                  this._emitConfigChanged();
+                }}
+              ></ha-switch>
+            </div>
+            ${this._renderFieldHelp(
+              "Menu organization and behavior",
+              "Group only organizes menus in the editor. Theme override controls this menu’s buttons. Action after tap decides whether an ordinary entity tap stays here, returns one step, or closes the current menu flow."
+            )}
             <div class="four-col">
               ${this._renderSelect("Choose existing group", menu.group || "", this._menuGroupOptions(),
                 (value) => { menu.group = value || ""; this.requestUpdate(); this._emitConfigChanged(); }
@@ -2791,16 +3776,18 @@ if (!customElements.get(EDITOR_TAG)) {
                 (value) => { menu.action_after_tap = value || "stay"; this._emitConfigChanged(); }
               )}
             </div>
+            ${this._renderFieldHelp(
+              "Editor note",
+              "This note is only for organizing your configuration. It appears in the menu’s collapsed editor header and is not shown on the live card."
+            )}
             <ha-selector .hass=${this.hass} .label=${"Editor note / description"}
               .value=${menu.description || ""} .selector=${{text: {multiline: true}}}
               @value-changed=${(e) => { menu.description = e.detail.value; this._emitConfigChanged(); }}></ha-selector>
-            <div class="helper-text">Action after tap runs after ordinary entity buttons in this menu. Navigation buttons keep their own destination behavior.</div>
-            <div class="helper-text">The description is shown in this menu’s collapsed header. The Menu ID is used by menu buttons; renaming it updates existing links automatically.</div>
             <div class="menu-usage-box">
-              <div class="menu-usage-title"><ha-icon icon="mdi:source-branch"></ha-icon> Used by ${usage.length} button${usage.length === 1 ? "" : "s"}</div>
+              <div class="menu-usage-title"><ha-icon icon="mdi:source-branch"></ha-icon> Used by ${usage.length} reference${usage.length === 1 ? "" : "s"}</div>
               ${usage.length
                 ? html`<div class="menu-usage-links">${usage.map((item) => html`<span>${item}</span>`)}</div>`
-                : html`<div class="inline-note">No button currently links to this menu.</div>`}
+                : html`<div class="inline-note">No button or default menu currently links to this menu.</div>`}
             </div>
             ${rows.map((row, rowIdx) => this._renderRow(row, rowIdx, menu.id))}
             <div class="action-row">
@@ -2813,14 +3800,19 @@ if (!customElements.get(EDITOR_TAG)) {
               <ha-button class="danger" @click=${() => {
                 const deletedId = menus[menuIdx].id;
                 const usageCount = this._menuUsage(deletedId).length;
-                if (!this._confirmDelete(`menu “${menus[menuIdx].title || deletedId}”`,
-                  `${(menus[menuIdx].rows || []).length} row(s) will be removed.${usageCount ? ` ${usageCount} linked button(s) will lose their destination.` : ""}`)) return;
-                menus.splice(menuIdx, 1);
-                this._walkEntities((entity) => {
-                  if (entity.menu_target === deletedId) entity.menu_target = "";
-                });
-                this.requestUpdate();
-                this._emitConfigChanged();
+                this._requestDelete(`menu “${menus[menuIdx].title || deletedId}”`,
+                  `${(menus[menuIdx].rows || []).length} row(s) will be removed.${usageCount ? ` ${usageCount} linked reference(s) will be cleared.` : ""}`,
+                  () => {
+                    menus.splice(menuIdx, 1);
+                    if (this._config.default_menu_id === deletedId) {
+                      this._config.default_menu_id =
+                        !(this._config.rows || []).length ? (menus[0]?.id || "") : "";
+                    }
+                    this._walkEntities((entity) => {
+                      if (entity.menu_target_scope !== "external" && entity.menu_target === deletedId) entity.menu_target = "";
+                    });
+                    this._emitConfigChanged();
+                  });
               }}>Delete menu</ha-button>
             </div>
           </div>
@@ -2830,9 +3822,10 @@ if (!customElements.get(EDITOR_TAG)) {
 
     _menuUsage(menuId) {
       const usage = [];
+      if (this._config.default_menu_id === menuId) usage.push("Default displayed menu");
       const scan = (rows, location) => (rows || []).forEach((row, rowIdx) =>
         (row.entities || []).forEach((entity, entIdx) => {
-          if (entity.button_type === "menu" && entity.menu_target === menuId) {
+          if (entity.button_type === "menu" && entity.menu_target_scope !== "external" && entity.menu_target === menuId) {
             usage.push(`${location} · Row ${rowIdx + 1} · ${entity.name || `Button ${entIdx + 1}`}`);
           }
         })
@@ -2867,6 +3860,37 @@ if (!customElements.get(EDITOR_TAG)) {
       (this._config.menus || []).forEach((menu) => visitRows(menu.rows));
     }
 
+    _setDefaultNavigationButton(target, enabled) {
+      this._walkEntities((entity) => {
+        if (entity.button_type === "navigation") delete entity.navigation_default;
+      });
+      if (enabled && target?.button_type === "navigation") {
+        target.navigation_default = true;
+      }
+      this._emitConfigChanged();
+    }
+
+    _setDefaultExternalMenuButton(target, enabled) {
+      const targetCardId = String(target?.menu_target_card || "").trim();
+      if (enabled && targetCardId) {
+        this._walkEntities((entity) => {
+          if (
+            entity !== target &&
+            entity.button_type === "menu" &&
+            entity.menu_target_scope === "external" &&
+            String(entity.menu_target_card || "").trim() === targetCardId
+          ) {
+            delete entity.menu_default;
+          }
+        });
+        target.menu_default = true;
+      } else if (target) {
+        delete target.menu_default;
+      }
+      this.requestUpdate();
+      this._emitConfigChanged();
+    }
+
     _renameMenu(menuIdx, requestedId) {
       const menus = this._config.menus || [];
       const menu = menus[menuIdx];
@@ -2882,8 +3906,9 @@ if (!customElements.get(EDITOR_TAG)) {
         return;
       }
       menu.id = cleaned;
+      if (this._config.default_menu_id === oldId) this._config.default_menu_id = cleaned;
       this._walkEntities((entity) => {
-        if (entity.menu_target === oldId) entity.menu_target = cleaned;
+        if (entity.menu_target_scope !== "external" && entity.menu_target === oldId) entity.menu_target = cleaned;
       });
       this.requestUpdate();
       this._emitConfigChanged();
@@ -2898,6 +3923,10 @@ if (!customElements.get(EDITOR_TAG)) {
       return html`
         <ha-expansion-panel class="row-editor-panel" .header=${header}>
           <div class="expansion-content">
+            ${this._renderFieldHelp(
+              "Row settings",
+              "Row label and position control the optional text around this row. Row theme override applies one reusable theme to every button in the row unless an individual button overrides it."
+            )}
             <div class="three-col">
               <ha-selector .hass=${this.hass} .label=${"Row label"}
                 .value=${row.label || ""}
@@ -2935,9 +3964,10 @@ if (!customElements.get(EDITOR_TAG)) {
                 this.requestUpdate(); this._emitConfigChanged();
               }}>Move down</ha-button>` : ""}
               <ha-button class="danger" @click=${() => {
-                if (!this._confirmDelete(`row ${rowIdx + 1}`, `${entities.length} button(s) will also be removed.`)) return;
-                rows.splice(rowIdx, 1);
-                this.requestUpdate(); this._emitConfigChanged();
+                this._requestDelete(`row ${rowIdx + 1}`, `${entities.length} button(s) will also be removed.`, () => {
+                  rows.splice(rowIdx, 1);
+                  this._emitConfigChanged();
+                });
               }}>Delete row</ha-button>
             </div>
           </div>
@@ -2964,6 +3994,16 @@ if (!customElements.get(EDITOR_TAG)) {
       ];
     }
 
+    _defaultMenuOptions() {
+      return [
+        ["", "Main menu rows (standard)"],
+        ...(this._config.menus || []).map((menu) => [
+          menu.id,
+          menu.group ? `${menu.group} · ${menu.title || menu.id}` : (menu.title || menu.id),
+        ]),
+      ];
+    }
+
     _menuGroupOptions() {
       const groups = Array.from(new Set(
         (this._config.menus || []).map((menu) => String(menu.group || "").trim()).filter(Boolean)
@@ -2972,16 +4012,81 @@ if (!customElements.get(EDITOR_TAG)) {
     }
 
     _renderMenuButtonSettings(ent) {
-      const targetIsMenu = ent.menu_target && !String(ent.menu_target).startsWith("__");
-      const stateMode = ent.menu_state_mode || (ent.entity ? "entity" : "auto");
+      const isExternal = ent.menu_target_scope === "external";
+      const targetIsMenu = isExternal
+        ? Boolean(ent.menu_target && ent.menu_target_card)
+        : Boolean(ent.menu_target && !String(ent.menu_target).startsWith("__"));
+      const stateMode = ent.menu_state_mode || "none";
       const isPopup = (ent.menu_display || "replace") === "popup";
       return html`
         <div class="menu-settings">
-          ${this._renderSelect("Destination", ent.menu_target || "", this._menuTargetOptions(), (value) => {
-            ent.menu_target = value;
-            this._emitConfigChanged();
-          })}
+          <div class="conditional-settings-title">
+            <ha-icon icon="mdi:link-variant"></ha-icon>
+            <div>
+              <b>Menu destination</b>
+              <span>Open a menu in this card or control another Quickboard.</span>
+            </div>
+          </div>
+          ${this._renderSelect("Open menu in", isExternal ? "external" : "local",
+            [["local","This Quickboard card"],["external","Another Quickboard card"]],
+            (value) => {
+              ent.menu_target_scope = value === "external" ? "external" : "local";
+              if (ent.menu_target_scope === "external" && !ent.entity) ent.menu_state_mode = "none";
+              if (ent.menu_target_scope !== "external") delete ent.menu_default;
+              this.requestUpdate();
+              this._emitConfigChanged();
+            }
+          )}
+          ${isExternal ? html`
+            ${this._renderFieldHelp(
+              "External destination",
+              "Copy the receiving card’s automatically generated Quickboard card ID and paste it here. Menu ID must exactly match a menu there; use __root__ for its initial content or __back__ for one step back."
+            )}
+            <div class="two-col">
+              <ha-selector .hass=${this.hass} .label=${"Target Quickboard card ID"}
+                .value=${ent.menu_target_card || ""} .selector=${{text: {}}}
+                @value-changed=${(e) => {
+                  ent.menu_target_card = String(e.detail.value || "").trim();
+                  if (ent.menu_default) this._setDefaultExternalMenuButton(ent, true);
+                  else this._emitConfigChanged();
+                }}></ha-selector>
+              <ha-selector .hass=${this.hass} .label=${"Menu ID in target card"}
+                .value=${ent.menu_target || ""} .selector=${{text: {}}}
+                @value-changed=${(e) => {
+                  ent.menu_target = String(e.detail.value || "").trim();
+                  if (ent.menu_default) this._setDefaultExternalMenuButton(ent, true);
+                  else this._emitConfigChanged();
+                }}></ha-selector>
+            </div>
+          ` : html`
+            ${this._renderFieldHelp(
+              "Destination",
+              "Choose a menu in this card. Previous menu goes back one step; Main menu returns directly to the card’s configured initial content."
+            )}
+            ${this._renderSelect("Destination", ent.menu_target || "", this._menuTargetOptions(), (value) => {
+              ent.menu_target = value;
+              this._emitConfigChanged();
+            })}
+          `}
           ${targetIsMenu ? html`
+            ${isExternal ? html`
+              ${this._renderFieldHelp(
+                "Default external menu",
+                "Enable this on one Navbar Menu button to open its destination automatically when the Navbar loads. Only one default is kept for each target Quickboard."
+              )}
+              <div class="toggle-row">
+                <div class="picker-label">Default menu for target card</div>
+                <ha-switch .checked=${ent.menu_default === true}
+                  @change=${(e) => this._setDefaultExternalMenuButton(ent, e.target.checked)}
+                ></ha-switch>
+              </div>
+            ` : ""}
+            ${this._renderFieldHelp(
+              "Opening mode and status",
+              isExternal
+                ? "Replace shows the destination inside the target card; Popup opens it above the dashboard. External automatic counts are not shared, so use None or a status entity. None is the default and hides the value."
+                : "Replace swaps the content inside this card; Popup opens above the dashboard. Automatic status shows active/total entities and lets color intervals use the active count. None hides the value."
+            )}
             <div class="two-col">
               ${this._renderSelect("Open menu as", ent.menu_display || "replace",
                 [["replace", "Replace current menu"], ["popup", "Popup"]],
@@ -2994,12 +4099,13 @@ if (!customElements.get(EDITOR_TAG)) {
               )}
               ${this._renderSelect("Menu status", stateMode,
                 [["auto", "Automatic: active/total"], ["entity", "Use status entity"], ["none", "None (hide status)"]],
-                (value) => { ent.menu_state_mode = value || "auto"; this.requestUpdate(); this._emitConfigChanged(); }
+                (value) => {
+                  ent.menu_state_mode = value || "none";
+                  if (ent.menu_state_mode === "none") ent.entity = "";
+                  this.requestUpdate();
+                  this._emitConfigChanged();
+                }
               )}
-            </div>
-            <div class="helper-text menu-color-help">
-              Automatic status counts active entities in the destination menu. Color intervals then use the active count.
-              Choose a status entity to base intervals on that entity instead. None hides the value completely; use a theme or Custom colors when no status exists.
             </div>
             <div class="two-col menu-toggle-grid">
               <div class="toggle-row compact-toggle">
@@ -3020,9 +4126,77 @@ if (!customElements.get(EDITOR_TAG)) {
                 </div>
               `}
             </div>
-          ` : html`
-            <div class="helper-text">Back returns one step in the current navigation history. Main menu returns directly to the first view.</div>
-          `}
+          ` : ""}
+        </div>
+      `;
+    }
+
+    _renderFieldHelp(title, text) {
+      return html`
+        <div class="field-help">
+          <ha-icon icon="mdi:information-outline"></ha-icon>
+          <div>
+            ${title ? html`<b>${title}</b>` : ""}
+            <span>${text}</span>
+          </div>
+        </div>
+      `;
+    }
+
+    _renderNavigationButtonSettings(ent) {
+      return html`
+        <div class="navigation-settings">
+          <div class="conditional-settings-title">
+            <ha-icon icon="mdi:page-next-outline"></ha-icon>
+            <div>
+              <b>Home Assistant page navigation</b>
+              <span>Open a dashboard view and keep the correct Navbar button selected.</span>
+            </div>
+          </div>
+          ${this._renderFieldHelp(
+            "Dashboard destination",
+            "Enter the Home Assistant dashboard path beginning with /. Example: /dashboard-tablet/lights."
+          )}
+          <ha-selector .hass=${this.hass} .label=${"Navigation path"}
+            .value=${ent.navigation_path || ""}
+            .selector=${{text: {}}}
+            @value-changed=${(e) => {
+              ent.navigation_path = String(e.detail.value || "").trim();
+              this._emitConfigChanged();
+            }}
+          ></ha-selector>
+          ${this._renderFieldHelp(
+            "Active matching and browser history",
+            "Exact path selects the button only on that page. Path and subpaths also selects it on pages below that path. Replace browser history avoids adding a new Back-button entry."
+          )}
+          <div class="two-col">
+            ${this._renderSelect("Active path matching", ent.active_path_match || "exact",
+              [["exact","Exact path"],["prefix","Path and subpaths"]],
+              (value) => {
+                ent.active_path_match = value || "exact";
+                this._emitConfigChanged();
+              }
+            )}
+            <div class="toggle-row compact-toggle">
+              <span class="picker-label">Replace browser history entry</span>
+              <ha-switch .checked=${ent.navigation_replace === true}
+                @change=${(e) => {
+                  ent.navigation_replace = e.target.checked;
+                  this._emitConfigChanged();
+                }}
+              ></ha-switch>
+            </div>
+          </div>
+          ${this._renderFieldHelp(
+            "Fallback selection",
+            "Default active button is used only when none of this card’s Navigation buttons matches the current page URL. A URL match always has priority."
+          )}
+          <div class="toggle-row compact-toggle navigation-default-toggle">
+            <div class="picker-label">Default active button</div>
+            <ha-switch .checked=${ent.navigation_default === true}
+              @change=${(e) => this._setDefaultNavigationButton(ent, e.target.checked)}
+            ></ha-switch>
+          </div>
         </div>
       `;
     }
@@ -3042,8 +4216,17 @@ if (!customElements.get(EDITOR_TAG)) {
       return (this._config.button_themes || []).find((theme) => theme.id === themeId) || null;
     }
 
+    _editorResolveButtonStyle(ent, theme = null) {
+      if (ent?.button_style && ent.button_style !== "inherit") return ent.button_style;
+      if (theme?.button_style && theme.button_style !== "inherit") return theme.button_style;
+      return this._config.button_style || "raised";
+    }
+
     _editorResolvePreviewState(ent) {
       const entityId = ent?.entity || "";
+      if (ent?.button_type === "navigation") {
+        return { stateObj: undefined, menuStats: null };
+      }
       if (ent?.button_type !== "menu") {
         return {
           stateObj: entityId ? this.hass?.states?.[entityId] : undefined,
@@ -3051,11 +4234,11 @@ if (!customElements.get(EDITOR_TAG)) {
         };
       }
 
-      const stateMode = ent.menu_state_mode || (entityId ? "entity" : "auto");
+      const stateMode = ent.menu_state_mode || "none";
       if (stateMode === "none") return { stateObj: undefined, menuStats: null };
-      if (stateMode === "entity" && entityId) {
+      if (stateMode === "entity") {
         return {
-          stateObj: this.hass?.states?.[entityId],
+          stateObj: entityId ? this.hass?.states?.[entityId] : undefined,
           menuStats: null,
         };
       }
@@ -3072,7 +4255,9 @@ if (!customElements.get(EDITOR_TAG)) {
         };
       }
 
-      const menuStats = this._previewMenuStats(ent.menu_target || "");
+      const menuStats = ent.menu_target_scope === "external"
+        ? { active: 0, total: 0 }
+        : this._previewMenuStats(ent.menu_target || "");
       return {
         stateObj: {
           entity_id: `quickboard_menu.${ent.menu_target || "menu"}`,
@@ -3105,7 +4290,12 @@ if (!customElements.get(EDITOR_TAG)) {
 
     _renderButtonPreview(ent, entIdx, menuId = "", rowCfg = null) {
       const isMenu = ent.button_type === "menu";
+      const isNavigation = ent.button_type === "navigation";
       const theme = this._editorResolveTheme(ent, menuId, rowCfg);
+      const buttonStyle = this._editorResolveButtonStyle(ent, theme);
+      const previewIsFlatRail =
+        buttonStyle === "flat" &&
+        (this._config.flat_layout || "rail") === "rail";
       const previewBadgeStyle = ent.badge_style && ent.badge_style !== "inherit"
         ? ent.badge_style
         : theme?.badge_style && theme.badge_style !== "inherit"
@@ -3172,43 +4362,101 @@ if (!customElements.get(EDITOR_TAG)) {
         ((!theme || previewOverridesButtonColors) && matchedPreviewInterval ? previewInterval.shadow_color : "") || from,
         previewStrength
       );
-      const name = ent.name || (isMenu ? "Menu button" : (ent.entity || `Button ${entIdx + 1}`));
+      const name = ent.name || (isMenu
+        ? "Menu button"
+        : isNavigation
+          ? "Navigation button"
+          : (previewStateObj?.attributes?.friendly_name || ent.entity || `Button ${entIdx + 1}`));
       const subtitle = isMenu
-        ? (ent.menu_target === "__back__" ? "Previous menu"
+        ? (ent.menu_target_scope === "external"
+          ? `${ent.menu_target_card || "Target card"} → ${ent.menu_target || "Menu ID"}${ent.menu_default ? " · Default" : ""}`
+          : ent.menu_target === "__back__" ? "Previous menu"
           : ent.menu_target === "__root__" ? "Main menu"
           : ((this._config.menus || []).find((menu) => menu.id === ent.menu_target)?.title || ent.menu_target || "Choose destination"))
-        : (ent.entity || "Choose entity");
-      const icon = ent.icon || (isMenu ? "mdi:view-grid-plus-outline" : "mdi:gesture-tap-button");
-      let previewValue = "—";
-      const menuStateMode = ent.menu_state_mode || (ent.entity ? "entity" : "auto");
-      if (isMenu && menuStateMode === "none") {
-        previewValue = "";
-      } else if (isMenu && menuStateMode === "auto") {
+        : isNavigation
+          ? `${ent.navigation_path || "Choose navigation path"}${ent.navigation_default ? " · Default active" : ""}`
+          : (ent.entity || "Choose entity");
+      const previewShowIcon =
+        ent.show_icon !== undefined ? ent.show_icon !== false : this._config.show_icon !== false;
+      const previewShowLabel = ent.show_label !== false;
+      const menuStateMode = ent.menu_state_mode || "none";
+      const previewShowState =
+        ent.show_state !== false &&
+        !isNavigation &&
+        !(isMenu && menuStateMode === "none");
+      let icon = "";
+      if (
+        previewShowIcon &&
+        previewStateObj &&
+        ent.icon_mode === "state" &&
+        Array.isArray(ent.icon_states)
+      ) {
+        const previewState = String(previewStateObj.state ?? "").toLowerCase();
+        const stateIcon = ent.icon_states.find(
+          (mapping) => String(mapping.state ?? "").toLowerCase() === previewState
+        );
+        if (stateIcon?.icon) icon = stateIcon.icon;
+      }
+      if (previewShowIcon && !icon) {
+        icon = ent.icon ||
+          previewStateObj?.attributes?.icon ||
+          (isMenu
+            ? "mdi:view-grid-plus-outline"
+            : isNavigation
+              ? "mdi:view-dashboard-outline"
+              : "mdi:gesture-tap-button");
+      }
+      let previewValue = "";
+      if (previewShowState && isMenu && menuStateMode === "auto") {
         if (ent.menu_target === "__back__") previewValue = "Back";
         else if (ent.menu_target === "__root__") previewValue = "Home";
         else {
           previewValue = `${previewMenuStats?.active ?? 0}/${previewMenuStats?.total ?? 0}`;
         }
-      } else if (previewStateObj) {
+      } else if (previewShowState && previewStateObj) {
         previewValue = `${previewStateObj.state}${previewStateObj.attributes?.unit_of_measurement || ""}`;
+      } else if (previewShowState) {
+        previewValue = ent.entity ? "Unavailable" : "No entity";
       }
-      const previewStyle = `--preview-from:${from};--preview-to:${to};--preview-text:${textColor};--preview-radius:${Number(theme?.border_radius ?? 12)}px;--preview-border-width:${Number(theme?.border_width || 0)}px;--preview-border:${theme?.border_color || "transparent"};--preview-shadow:${previewShadow};`;
+      const previewHasBadges = Boolean(ent.badges?.length);
+      const previewIsIconOnly =
+        previewShowIcon && !previewShowLabel && !previewShowState && !previewHasBadges;
+      const previewIconSize = Number(ent.icon_size);
+      const previewStyle = `--preview-from:${from};--preview-to:${to};--preview-text:${textColor};--preview-radius:${Number(theme?.border_radius ?? 12)}px;--preview-border-width:${Number(theme?.border_width || 0)}px;--preview-border:${theme?.border_color || "transparent"};--preview-shadow:${previewShadow};--preview-icon-size:${Number.isFinite(previewIconSize) && previewIconSize > 0 ? previewIconSize : 20}px;`;
       return html`
-        <div class="button-preview" style=${previewStyle}>
-          <div class="button-preview-type" title=${isMenu ? "Menu button" : "Entity button"}>
-            <ha-icon .icon=${isMenu ? "mdi:menu" : "mdi:flash-outline"}></ha-icon>
+        <div
+          class=${`button-preview button-preview-${buttonStyle}${previewIsFlatRail ? " button-preview-rail" : ""}${!previewShowLabel ? " button-preview-no-label" : ""}${previewIsIconOnly ? " button-preview-icon-only" : ""}`}
+          style=${previewStyle}
+          title=${!previewShowLabel ? name : ""}
+        >
+          <div class="button-preview-type" title=${isMenu ? "Menu button" : isNavigation ? "Navigation button" : "Entity button"}>
+            <ha-icon .icon=${isMenu
+              ? "mdi:menu"
+              : isNavigation
+                ? "mdi:page-next-outline"
+                : "mdi:flash-outline"}></ha-icon>
           </div>
-          <ha-icon .icon=${icon}></ha-icon>
-          <div class="button-preview-copy">
-            <div class="button-preview-name">${name}</div>
-            <div class="button-preview-subtitle">${isMenu ? "Menu" : "Entity"} · ${subtitle}</div>
+          ${previewShowIcon ? html`<ha-icon class="button-preview-main-icon" .icon=${icon}></ha-icon>` : ""}
+          ${previewShowLabel || previewHasBadges ? html`
+            <div class="button-preview-copy">
+              ${previewShowLabel ? html`
+                <div class="button-preview-name">${name}</div>
+                <div class="button-preview-subtitle">${isMenu ? "Menu" : isNavigation ? "Navigation" : "Entity"} · ${subtitle}</div>
+              ` : ""}
             ${ent.badges?.length ? html`
               <div class=${`button-preview-badges preview-badge-${previewBadgeStyle}`}>
-                ${ent.badges.slice(0, 3).map((badge) => html`<span>${badge.label || badge.entity || "Badge"}</span>`)}
+                ${ent.badges.slice(0, 3).map((badge) => html`
+                  <span style=${Number.isFinite(Number(badge.font_size)) && Number(badge.font_size) > 0
+                    ? `font-size:${Number(badge.font_size)}px`
+                    : ""}>
+                    ${badge.label || badge.entity || "Badge"}
+                  </span>
+                `)}
                 ${ent.badges.length > 3 ? html`<span>+${ent.badges.length - 3}</span>` : ""}
               </div>
             ` : ""}
-          </div>
+            </div>
+          ` : ""}
           ${previewValue ? html`<div class="button-preview-value">${previewValue}</div>` : ""}
           <ha-icon class="preview-chevron" icon="mdi:chevron-down"></ha-icon>
         </div>
@@ -3222,7 +4470,7 @@ if (!customElements.get(EDITOR_TAG)) {
       let active = 0;
       let total = 0;
       (menu?.rows || []).forEach((row) => (row.entities || []).forEach((item) => {
-        if (item.button_type === "menu" && item.menu_target && !String(item.menu_target).startsWith("__")) {
+        if (item.button_type === "menu" && item.menu_target_scope !== "external" && item.menu_target && !String(item.menu_target).startsWith("__")) {
           const nested = this._previewMenuStats(item.menu_target, visited, counted);
           active += nested.active;
           total += nested.total;
@@ -3243,6 +4491,7 @@ if (!customElements.get(EDITOR_TAG)) {
       const colorMode = ent.color_mode || "interval";
       const scopeKey = this._scopeKey(menuId);
       const isMenu = ent.button_type === "menu";
+      const isNavigation = ent.button_type === "navigation";
       const rowCfg = this._rowsForScope(menuId)[rowIdx];
       const activeTheme = this._editorResolveTheme(ent, menuId, rowCfg);
       const buttonStrengthInherited = ent.shadow_strength === null || ent.shadow_strength === undefined || String(ent.shadow_strength).trim() === "";
@@ -3257,19 +4506,54 @@ if (!customElements.get(EDITOR_TAG)) {
         <details class="button-details">
           <summary>${this._renderButtonPreview(ent, entIdx, menuId, rowCfg)}</summary>
           <div class="expansion-content">
-            ${this._renderSelect("Button type", isMenu ? "menu" : "entity",
-              [["entity", "Entity button"], ["menu", "Menu button"]],
+            ${this._renderFieldHelp(
+              "Button function",
+              "Entity controls or displays a Home Assistant entity. Menu opens Quickboard menus locally or in another card. Navigation opens a Home Assistant dashboard page."
+            )}
+            ${this._renderSelect("Button type", isMenu ? "menu" : isNavigation ? "navigation" : "entity",
+              [
+                ["entity", "Entity button"],
+                ["menu", "Menu button — Quickboard menu"],
+                ["navigation", "Navigation button — Home Assistant page"],
+              ],
               (value) => {
+                const previousType = ent.button_type || "entity";
                 ent.button_type = value || "entity";
-                if (ent.button_type === "menu" && !ent.menu_target) ent.menu_target = this._config.menus?.[0]?.id || "";
+                if (ent.button_type === "menu") {
+                  if (!ent.menu_target) ent.menu_target = this._config.menus?.[0]?.id || "";
+                  if (previousType !== "menu") {
+                    ent.entity = "";
+                    ent.menu_state_mode = "none";
+                  }
+                } else {
+                  delete ent.menu_default;
+                }
+                if (ent.button_type === "navigation") {
+                  ent.active_path_match = ent.active_path_match || "exact";
+                  ent.navigation_path = ent.navigation_path || "";
+                } else {
+                  delete ent.navigation_default;
+                }
                 this.requestUpdate();
                 this._emitConfigChanged();
               }
             )}
-
             ${isMenu ? this._renderMenuButtonSettings(ent) : ""}
+            ${isNavigation ? this._renderNavigationButtonSettings(ent) : ""}
 
-            ${!isMenu || (ent.menu_state_mode || (ent.entity ? "entity" : "auto")) === "entity" ? html`
+            ${this._renderFieldHelp(
+              "Button appearance",
+              "Inherit uses the active row, menu or global theme/style. Raised is the classic card-like button. Flat removes the raised surface and can be used on any button type."
+            )}
+            ${this._renderSelect("Button style", ent.button_style || "inherit",
+              [["inherit","Inherit theme/global"],["raised","Raised"],["flat","Flat"]],
+              (value) => {
+                ent.button_style = value || "inherit";
+                this._emitConfigChanged();
+              }
+            )}
+
+            ${(!isMenu && !isNavigation) || (isMenu && (ent.menu_state_mode || "none") === "entity") ? html`
               <div class="picker-label">${isMenu ? "Status entity (optional)" : "Entity"}</div>
               <div class="entity-picker-placeholder" id=${`entity-picker-${scopeKey}-${rowIdx}-${entIdx}`}></div>
             ` : ""}
@@ -3283,6 +4567,10 @@ if (!customElements.get(EDITOR_TAG)) {
               }}
             ></ha-selector>
 
+            ${this._renderFieldHelp(
+              "Icon behavior",
+              "Single icon always uses one icon. By state lets you map exact entity states such as on and off to different icons."
+            )}
             <div class="two-col">
               ${this._renderSelect("Icon mode", ent.icon_mode || "single",
                 [["single","Single icon"],["state","By state"]],
@@ -3324,9 +4612,10 @@ if (!customElements.get(EDITOR_TAG)) {
                   </div>
                   <div class="action-row">
                     <ha-button class="danger" @click=${() => {
-                      if (!this._confirmDelete(`state icon “${m.state || mIdx + 1}”`)) return;
-                      ent.icon_states.splice(mIdx, 1);
-                      this.requestUpdate(); this._emitConfigChanged();
+                      this._requestDelete(`state icon “${m.state || mIdx + 1}”`, "", () => {
+                        ent.icon_states.splice(mIdx, 1);
+                        this._emitConfigChanged();
+                      });
                     }}>Remove</ha-button>
                   </div>
                 `)}
@@ -3340,19 +4629,58 @@ if (!customElements.get(EDITOR_TAG)) {
               </div>
             ` : ""}
 
-            <div class="toggle-row">
-              <span class="picker-label">Show icon</span>
-              <ha-switch .checked=${ent.show_icon !== undefined ? ent.show_icon !== false : this._config.show_icon !== false}
-                @change=${(e) => {
-                  const globalDefault = this._config.show_icon !== false;
-                  const newValue = e.target.checked;
-                  ent.show_icon = newValue === globalDefault ? undefined : newValue;
-                  this._emitConfigChanged();
-                }}
-              ></ha-switch>
+            ${this._renderFieldHelp(
+              "Visible button content",
+              "Show label controls both a custom name and the automatic entity name. Show state controls the value or status line. Turn off both Label and State for a centered icon-only button. State-based icons still follow the entity when the state text is hidden."
+            )}
+            <div class="three-col content-toggle-grid">
+              <div class="toggle-row compact-toggle">
+                <span class="picker-label">Show icon</span>
+                <ha-switch .checked=${ent.show_icon !== undefined ? ent.show_icon !== false : this._config.show_icon !== false}
+                  @change=${(e) => {
+                    const globalDefault = this._config.show_icon !== false;
+                    const newValue = e.target.checked;
+                    ent.show_icon = newValue === globalDefault ? undefined : newValue;
+                    this._emitConfigChanged();
+                  }}
+                ></ha-switch>
+              </div>
+              <div class="toggle-row compact-toggle">
+                <span class="picker-label">Show label</span>
+                <ha-switch .checked=${ent.show_label !== false}
+                  @change=${(e) => {
+                    ent.show_label = e.target.checked;
+                    this._emitConfigChanged();
+                  }}
+                ></ha-switch>
+              </div>
+              ${!isNavigation && !(isMenu && (ent.menu_state_mode || "none") === "none") ? html`
+                <div class="toggle-row compact-toggle">
+                  <span class="picker-label">Show state</span>
+                  <ha-switch .checked=${ent.show_state !== false}
+                    @change=${(e) => {
+                      ent.show_state = e.target.checked;
+                      this._emitConfigChanged();
+                    }}
+                  ></ha-switch>
+                </div>
+              ` : ""}
             </div>
 
-            <div class="two-col">
+            ${this._renderFieldHelp(
+              "Button sizing and value formatting",
+              "Icon size is measured in pixels. Value and label font scales use 1.0 as normal size. Decimal places and Unit override the global/entity values only for this button."
+            )}
+            <div class="three-col">
+              <ha-selector .hass=${this.hass} .label=${"Icon size (px)"}
+                .value=${ent.icon_size ?? 20}
+                .selector=${{number: {min: 8, max: 96, step: 1, mode: "box"}}}
+                @value-changed=${(e) => {
+                  const raw = e.detail.value;
+                  ent.icon_size = raw === "" || raw === null || raw === undefined ? undefined : Number(raw);
+                  this._emitConfigChanged();
+                }}
+              ></ha-selector>
               <ha-selector .hass=${this.hass} .label=${"Value font scale"}
                 .value=${ent.value_font_size ?? 1.0}
                 .selector=${{number: {min: 0.1, step: 0.1, mode: "box"}}}
@@ -3391,16 +4719,24 @@ if (!customElements.get(EDITOR_TAG)) {
               ></ha-selector>
             </div>
 
-            ${this._renderSelect("Theme override", ent.theme_id || "", this._themeOptions("override"),
-              (value) => { ent.theme_id = value || ""; this.requestUpdate(); this._emitConfigChanged(); }
+            ${this._renderFieldHelp(
+              "Theme override",
+              "Choose a reusable theme for this button, inherit from its row/menu/global settings, or select No theme to let this button use Color intervals or Custom colors directly."
             )}
             ${activeTheme ? html`
               <div class="theme-active-note"><ha-icon icon="mdi:palette"></ha-icon>
                 Active theme: <b>${activeTheme.name || activeTheme.id}</b>. It overrides the color source below; select “No theme” to use intervals or custom colors for this button.
               </div>
             ` : ""}
+            ${this._renderSelect("Theme override", ent.theme_id || "", this._themeOptions("override"),
+              (value) => { ent.theme_id = value || ""; this.requestUpdate(); this._emitConfigChanged(); }
+            )}
 
             <div class="subsection-title">Shadow</div>
+            ${this._renderFieldHelp(
+              "Button shadow",
+              "Inherit follows the active theme or global Appearance setting. Active theme / color interval uses the matched interval’s Active shadow color; if empty, it falls back to the current theme or button color."
+            )}
             <div class="three-col">
               ${this._renderSelect("Shadow type", ent.shadow_preset || "inherit",
                 [["inherit","Inherit theme/global"],["none","None"],["soft","Soft"],["medium","Medium"],["strong","Strong"],["glow","Glow"]],
@@ -3423,10 +4759,11 @@ if (!customElements.get(EDITOR_TAG)) {
             ${ent.shadow_color_mode === "custom"
               ? this._renderShadowColorControl(ent, "shadow_color", "Button shadow color", "#FF9800")
               : ""}
-            <div class="helper-text shadow-help">
-              “Active theme / color interval” uses the matched interval’s Active shadow color. If that field is empty, the current theme or button color is used.
-            </div>
 
+            ${this._renderFieldHelp(
+              "Button color source",
+              "Color interval reacts to the button’s entity state and uses per-button intervals first, then global intervals. Custom colors use the selected gradient unless an active theme overrides them."
+            )}
             ${this._renderSelect("Color source", colorMode,
               [["interval","Color interval"],["custom","Custom colors"]],
               (v) => {
@@ -3532,11 +4869,19 @@ if (!customElements.get(EDITOR_TAG)) {
                       </div>
                       ${this._renderShadowColorControl(interval, "shadow_color", "Active shadow color", interval.color_from || "#FF9800")}
                     </div>
+                    ${this._renderFieldHelp(
+                      "Exact state matching",
+                      "Use Match state for non-numeric states such as on, off, home or playing. It replaces the numeric From/To match for this interval."
+                    )}
                     <ha-selector .hass=${this.hass} .label=${"Match state (optional, e.g. on, off)"}
                       .value=${interval.match_state || ""}
                       .selector=${{text: {}}}
                       @value-changed=${(e) => this._updateEntityIntervalField(rowIdx, entIdx, iIdx, "match_state", e.detail.value, menuId)}
                     ></ha-selector>
+                    ${this._renderFieldHelp(
+                      "Displayed state text",
+                      "State label replaces the displayed value. Suffix text is appended and supports: <state>, <unit>, <dimmer_pct>, <source>, <title>, <artist>, <album>, <title_artist>."
+                    )}
                     <div class="two-col">
                       <ha-selector .hass=${this.hass} .label=${"State label (optional)"}
                         .value=${interval.state_text || ""}
@@ -3549,12 +4894,12 @@ if (!customElements.get(EDITOR_TAG)) {
                         @value-changed=${(e) => this._updateEntityIntervalField(rowIdx, entIdx, iIdx, "suffix_text", e.detail.value, menuId)}
                       ></ha-selector>
                     </div>
-                    <div class="helper-text">Variables: &lt;state&gt; &lt;unit&gt; &lt;dimmer_pct&gt; &lt;source&gt; &lt;title&gt; &lt;artist&gt; &lt;album&gt; &lt;title_artist&gt;</div>
                     <div class="action-row">
                       <ha-button class="danger" @click=${() => {
-                        if (!this._confirmDelete(`button color interval ${iIdx + 1}`)) return;
-                        ent.color_intervals.splice(iIdx, 1);
-                        this.requestUpdate(); this._emitConfigChanged();
+                        this._requestDelete(`button color interval ${iIdx + 1}`, "", () => {
+                          ent.color_intervals.splice(iIdx, 1);
+                          this._emitConfigChanged();
+                        });
                       }}>Delete interval</ha-button>
                     </div>
                   </div>
@@ -3577,12 +4922,20 @@ if (!customElements.get(EDITOR_TAG)) {
               </div>
             ` : ""}
 
-            ${!isMenu ? html`
+            ${!isMenu && !isNavigation ? html`
               <div class="subsection-title">Tap action</div>
+              ${this._renderFieldHelp(
+                "Tap action",
+                "Default chooses a sensible action from the entity domain. Override it to toggle, show More info, navigate, open a URL, call a service, or deliberately do nothing."
+              )}
               ${this._renderTapActionEditor(ent, ent.tap_action)}
             ` : ""}
 
             <div class="subsection-title">Badges</div>
+            ${this._renderFieldHelp(
+              "Button badges",
+              "Badges add compact secondary information or controls below the main button value. Each badge can use its own entity, type, icon, label and text/icon size."
+            )}
             ${badges.length ? this._renderSelect("Badge style for this button", ent.badge_style || "inherit",
               [["inherit","Inherit theme/global"],["pill","Pill"],["pill-strong","Pill strong"],["chip","Chip"],["underline","Underline"],["none","None"]],
               (value) => {
@@ -3597,6 +4950,7 @@ if (!customElements.get(EDITOR_TAG)) {
                 if (!ent.badges) ent.badges = [];
                 ent.badges.push({
                   entity: "", icon: "", label: "", show_icon: true,
+                  font_size: 11, icon_size: 18,
                   badge_type: "value", stats_mode: "max", stats_hours: 24,
                   media_action: "play_pause", media_info_mode: "title_artist",
                   alarm_action: "arm_home", alarm_code: "",
@@ -3606,6 +4960,9 @@ if (!customElements.get(EDITOR_TAG)) {
             </div>
 
             <div class="action-row">
+              <ha-button @click=${() => this._duplicateButton(rowIdx, entIdx, menuId)}>
+                Duplicate button
+              </ha-button>
               ${entIdx > 0 ? html`<ha-button @click=${() => {
                 [entities[entIdx - 1], entities[entIdx]] = [entities[entIdx], entities[entIdx - 1]];
                 this.requestUpdate(); this._emitConfigChanged();
@@ -3615,9 +4972,10 @@ if (!customElements.get(EDITOR_TAG)) {
                 this.requestUpdate(); this._emitConfigChanged();
               }}>Move down</ha-button>` : ""}
               <ha-button class="danger" @click=${() => {
-                if (!this._confirmDelete(`button “${ent.name || ent.entity || entIdx + 1}”`, `${badges.length} badge(s) will also be removed.`)) return;
-                entities.splice(entIdx, 1);
-                this.requestUpdate(); this._emitConfigChanged();
+                this._requestDelete(`button “${ent.name || ent.entity || entIdx + 1}”`, `${badges.length} badge(s) will also be removed.`, () => {
+                  entities.splice(entIdx, 1);
+                  this._emitConfigChanged();
+                });
               }}>Delete button</ha-button>
             </div>
           </div>
@@ -3668,6 +5026,10 @@ if (!customElements.get(EDITOR_TAG)) {
           ></ha-selector>
         ` : ""}
         ${action === "call-service" ? html`
+          ${this._renderFieldHelp(
+            "Service call",
+            "Enter a service such as light.turn_on. Service data must be valid JSON; the button entity_id is added automatically unless your JSON supplies other targets."
+          )}
           <ha-selector .hass=${this.hass} .label=${"Service (e.g. light.turn_on)"}
             .value=${tapAction?.service || ""}
             .selector=${{text: {}}}
@@ -3761,6 +5123,10 @@ if (!customElements.get(EDITOR_TAG)) {
             </div>
           </div>
           <div class="expansion-content">
+            ${this._renderFieldHelp(
+              "Badge source and type",
+              "Select the entity the badge reads or controls. Value displays its state; Dimmer controls light brightness; Stats reads history; Media and Alarm provide specialized controls or information."
+            )}
             <div class="picker-label">Badge entity</div>
             <div class="badge-entity-picker-placeholder" id=${`badge-entity-picker-${scopeKey}-${rowIdx}-${entIdx}-${bIdx}`}></div>
 
@@ -3771,6 +5137,10 @@ if (!customElements.get(EDITOR_TAG)) {
             )}
 
             ${type === "stats" ? html`
+              ${this._renderFieldHelp(
+                "Statistics badge",
+                "Choose which historical value to calculate and how many previous hours should be included."
+              )}
               <div class="two-col">
                 ${this._renderSelect("Stats mode", b.stats_mode || "max",
                   [["min","Min"],["max","Max"],["avg","Average"],
@@ -3828,7 +5198,11 @@ if (!customElements.get(EDITOR_TAG)) {
               ></ha-switch>
             </div>
 
-            <div class="two-col">
+            ${this._renderFieldHelp(
+              "Badge appearance and formatting",
+              "Icon size and Font size are measured in pixels. Decimal places and Unit override the entity or global formatting only for this badge."
+            )}
+            <div class="three-col">
               ${showIcon ? html`
                 <ha-icon-picker label="Icon" .hass=${this.hass} .value=${b.icon || ""}
                   @value-changed=${(e) => { badges[bIdx].icon = e.detail.value; this.requestUpdate(); this._emitConfigChanged(); }}
@@ -3840,9 +5214,21 @@ if (!customElements.get(EDITOR_TAG)) {
                 .selector=${{text: {}}}
                 @value-changed=${(e) => { badges[bIdx].label = e.detail.value; this.requestUpdate(); this._emitConfigChanged(); }}
               ></ha-selector>
+              ${showIcon ? html`
+                <ha-selector .hass=${this.hass} .label=${"Icon size (px)"}
+                  .value=${b.icon_size ?? 18}
+                  .selector=${{number: {min: 8, max: 64, step: 1, mode: "box"}}}
+                  @value-changed=${(e) => {
+                    const raw = e.detail.value;
+                    badges[bIdx].icon_size =
+                      raw === "" || raw === null || raw === undefined ? undefined : Number(raw);
+                    this._emitConfigChanged();
+                  }}
+                ></ha-selector>
+              ` : ""}
             </div>
 
-            <div class="two-col">
+            <div class="three-col">
               <ha-selector .hass=${this.hass} .label=${"Decimal places (leave blank to use entity/global)"}
                 .value=${b.decimal_places ?? ""}
                 .selector=${{number: {min: 0, max: 6, step: 1, mode: "box"}}}
@@ -3862,13 +5248,27 @@ if (!customElements.get(EDITOR_TAG)) {
                   this._emitConfigChanged();
                 }}
               ></ha-selector>
+              <ha-selector .hass=${this.hass} .label=${"Font size (px)"}
+                .value=${b.font_size ?? 11}
+                .selector=${{number: {min: 7, max: 40, step: 1, mode: "box"}}}
+                @value-changed=${(e) => {
+                  const raw = e.detail.value;
+                  badges[bIdx].font_size =
+                    raw === "" || raw === null || raw === undefined ? undefined : Number(raw);
+                  this._emitConfigChanged();
+                }}
+              ></ha-selector>
             </div>
 
             <div class="action-row">
+              <ha-button @click=${() => this._duplicateBadge(badges, bIdx)}>
+                Duplicate badge
+              </ha-button>
               <ha-button class="danger" @click=${() => {
-                if (!this._confirmDelete(`badge “${b.label || b.entity || bIdx + 1}”`)) return;
-                badges.splice(bIdx, 1);
-                this.requestUpdate(); this._emitConfigChanged();
+                this._requestDelete(`badge “${b.label || b.entity || bIdx + 1}”`, "", () => {
+                  badges.splice(bIdx, 1);
+                  this._emitConfigChanged();
+                });
               }}>Delete badge</ha-button>
             </div>
           </div>
@@ -3895,6 +5295,24 @@ if (!customElements.get(EDITOR_TAG)) {
           color: var(--primary-text-color);
           font-weight: 800;
           letter-spacing: .2px;
+        }
+        .editor-doc-link {
+          display:inline-flex;
+          align-items:center;
+          gap:6px;
+          width:fit-content;
+          margin-top:5px;
+          color:var(--primary-color, #03a9f4);
+          font-size:11px;
+          font-weight:600;
+          line-height:1.3;
+          text-decoration:none;
+        }
+        .editor-doc-link:hover { text-decoration:underline; }
+        .editor-doc-link ha-icon {
+          width:15px;
+          height:15px;
+          --mdc-icon-size:15px;
         }
 
         ha-selector {
@@ -4040,11 +5458,34 @@ if (!customElements.get(EDITOR_TAG)) {
           box-shadow: var(--preview-shadow, 0 3px 10px rgba(0,0,0,.22));
         }
         .button-preview > ha-icon {
-          width:24px;
-          height:24px;
-          flex:0 0 auto;
+          width:var(--preview-icon-size, 20px);
+          height:var(--preview-icon-size, 20px);
+          --mdc-icon-size:var(--preview-icon-size, 20px);
+          flex:0 0 var(--preview-icon-size, 20px);
           color:inherit !important;
           --icon-primary-color:currentColor;
+        }
+        .button-preview-flat {
+          border:0;
+          border-radius:10px;
+          color:var(--primary-text-color);
+          background:transparent;
+          box-shadow:none;
+          box-shadow:inset 3px 0 0 color-mix(in srgb, var(--preview-from, var(--primary-color, #03a9f4)) 75%, transparent);
+        }
+        .button-preview-flat .button-preview-badges span {
+          background:rgba(127,127,127,.12);
+          border-color:rgba(127,127,127,.18);
+        }
+        .button-preview-flat.button-preview-rail > ha-icon {
+          box-sizing:content-box;
+          padding:9px;
+          border-radius:12px;
+          background:color-mix(
+            in srgb,
+            var(--preview-from, var(--primary-color, #03a9f4)) 24%,
+            var(--card-background-color, #1c1c1c)
+          );
         }
         .button-preview-type {
           position: absolute;
@@ -4106,15 +5547,118 @@ if (!customElements.get(EDITOR_TAG)) {
           white-space: nowrap;
           margin-right: 13px;
         }
+        .button-preview-no-label {
+          justify-content:center;
+        }
+        .button-preview-no-label .button-preview-copy {
+          flex:0 1 auto;
+        }
+        .button-preview-no-label .button-preview-value {
+          margin-right:0;
+          text-align:center;
+        }
+        .button-preview-icon-only .button-preview-main-icon {
+          margin-inline:auto;
+        }
+        .button-preview-icon-only .preview-chevron {
+          position:absolute;
+          right:12px;
+        }
         .preview-chevron { transition: transform .18s ease; }
         .button-details[open] .preview-chevron { transform: rotate(180deg); }
 
-        .menu-settings {
+        .menu-settings,
+        .navigation-settings {
           margin: 0 0 12px;
           padding: 12px;
           border-radius: 12px;
           border: 1px solid color-mix(in srgb, var(--primary-color, #03a9f4) 35%, transparent);
           background: color-mix(in srgb, var(--primary-color, #03a9f4) 8%, transparent);
+        }
+        .navigation-default-toggle {
+          margin-bottom:10px;
+        }
+        .conditional-settings-title {
+          display:flex;
+          align-items:flex-start;
+          gap:9px;
+          padding:0 0 10px;
+          margin:0 0 11px;
+          border-bottom:1px solid color-mix(in srgb, var(--primary-color, #03a9f4) 24%, transparent);
+        }
+        .conditional-settings-title > ha-icon {
+          width:20px;
+          height:20px;
+          --mdc-icon-size:20px;
+          flex:0 0 20px;
+          color:var(--primary-color, #03a9f4);
+        }
+        .conditional-settings-title > div {
+          display:flex;
+          flex-direction:column;
+          gap:2px;
+          min-width:0;
+        }
+        .conditional-settings-title b {
+          color:var(--primary-text-color);
+          font-size:13px;
+        }
+        .conditional-settings-title span {
+          color:var(--secondary-text-color);
+          font-size:10px;
+          line-height:1.4;
+        }
+        .field-help {
+          display:flex;
+          align-items:flex-start;
+          gap:7px;
+          margin:11px 0 6px;
+          padding:7px 9px;
+          border-left:3px solid color-mix(in srgb, var(--primary-color, #03a9f4) 75%, transparent);
+          border-radius:7px;
+          background:color-mix(in srgb, var(--primary-color, #03a9f4) 7%, transparent);
+          color:var(--secondary-text-color);
+          font-size:10px;
+          line-height:1.45;
+        }
+        .field-help > ha-icon {
+          width:16px;
+          height:16px;
+          --mdc-icon-size:16px;
+          flex:0 0 16px;
+          color:var(--primary-color, #03a9f4);
+        }
+        .field-help > div {
+          display:flex;
+          flex-direction:column;
+          gap:1px;
+          min-width:0;
+        }
+        .field-help b {
+          color:var(--primary-text-color);
+          font-size:10px;
+        }
+        .quickboard-id-box {
+          display:grid;
+          grid-template-columns:minmax(0, 1fr) auto;
+          align-items:center;
+          gap:8px;
+          margin:-3px 0 16px;
+          padding:8px 10px;
+          border:1px solid var(--divider-color);
+          border-radius:10px;
+          background:rgba(127,127,127,.07);
+        }
+        .quickboard-id-box code {
+          min-width:0;
+          overflow-wrap:anywhere;
+          color:var(--primary-text-color);
+          font-size:11px;
+          user-select:all;
+        }
+        .quickboard-id-box ha-button {
+          zoom:.84;
+          --mdc-typography-button-font-size:11px;
         }
         .menu-help-details {
           display:block;
@@ -4325,6 +5869,19 @@ if (!customElements.get(EDITOR_TAG)) {
         .menu-usage-links span { padding:4px 7px; border-radius:8px; background:rgba(127,127,127,.11); font-size:10px; }
         .menu-color-help { margin: -2px 0 6px; }
         .compact-toggle { margin: 0; padding: 8px 0; }
+        .content-toggle-grid {
+          margin-bottom:12px;
+        }
+        .content-toggle-grid .toggle-row {
+          min-width:0;
+          margin:0;
+          padding:6px 0;
+          border-bottom:0;
+          gap:8px;
+        }
+        .content-toggle-grid .picker-label {
+          margin:0;
+        }
         .interval-theme-overrides {
           display:grid;
           grid-template-columns:repeat(2, minmax(0, 1fr));
@@ -4586,6 +6143,59 @@ if (!customElements.get(EDITOR_TAG)) {
         ha-button.danger {
           --primary-color: var(--error-color);
           --mdc-theme-primary: var(--error-color);
+        }
+
+        .editor-confirm-backdrop {
+          position:fixed;
+          inset:0;
+          z-index:100000;
+          display:grid;
+          place-items:center;
+          padding:18px;
+          box-sizing:border-box;
+          background:rgba(0,0,0,.58);
+          backdrop-filter:blur(2px);
+        }
+        .editor-confirm-dialog {
+          width:min(420px, 100%);
+          display:grid;
+          grid-template-columns:auto minmax(0, 1fr);
+          gap:12px;
+          padding:18px;
+          box-sizing:border-box;
+          border:1px solid color-mix(in srgb, var(--error-color, #db4437) 45%, var(--divider-color));
+          border-radius:16px;
+          background:var(--ha-card-background, var(--card-background-color, #fff));
+          color:var(--primary-text-color);
+          box-shadow:0 18px 55px rgba(0,0,0,.48);
+        }
+        .editor-confirm-dialog > ha-icon {
+          width:26px;
+          height:26px;
+          --mdc-icon-size:26px;
+          color:var(--error-color, #db4437);
+        }
+        .editor-confirm-copy > div {
+          font-size:16px;
+          font-weight:800;
+          line-height:1.3;
+        }
+        .editor-confirm-copy p {
+          margin:8px 0 5px;
+          color:var(--secondary-text-color);
+          font-size:12px;
+          line-height:1.45;
+        }
+        .editor-confirm-copy small {
+          color:var(--error-color, #db4437);
+          font-weight:700;
+        }
+        .editor-confirm-actions {
+          grid-column:1 / -1;
+          display:flex;
+          justify-content:flex-end;
+          gap:8px;
+          padding-top:4px;
         }
 
         .support-card {
