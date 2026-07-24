@@ -2,6 +2,47 @@
 
 All notable changes to Andy Quickboard Card are documented in this file.
 
+## v1.2.2 — 2026-07-24
+
+Version 1.2.2 expands Quickboard from an in-card menu system into a full controller and navigation platform. The items below describe the final result compared with v1.2.1.
+
+### Added
+
+- Added **Flat** button styling alongside the classic Raised style.
+- Added two Flat layouts:
+  - Compact icon rail for narrow vertical or horizontal Navbars.
+  - Full-width icon and label for Flat control panels.
+- Added per-button icon sizing.
+- Added independent per-button controls for showing the icon, label and state.
+- Added centered icon-only buttons. State-based icon mappings continue to follow the entity even when its state text is hidden.
+- Added persistent selected styling for tapped Flat buttons.
+- Added a dedicated **Navigation button** type for opening Home Assistant dashboard pages.
+- Added exact and prefix URL matching so the button for the current dashboard page is selected automatically.
+- Added a fallback default Navigation button and optional browser-history replacement.
+- Added automatic persistent Quickboard card IDs with a Copy button in the visual editor.
+- Added cross-card Menu buttons that can open a specific menu in another Quickboard loaded on the same dashboard view.
+- Added active-menu synchronization so an external Flat Navbar follows the menu displayed by its target Quickboard.
+- Added one configurable default external Menu button per target Quickboard.
+- Added `default_menu_id`, allowing a Quickboard with no main rows to work as a dedicated menu-only content panel.
+- Added per-badge font size and icon size.
+- Added `show_title` per menu so its live heading can be hidden without removing its editor name.
+- Added deep **Duplicate button** and **Duplicate badge** actions. Copies include every nested setting, including intervals, state icons, actions and badges.
+
+### Changed
+
+- Flat styling now works with Entity, Menu and Navigation buttons; it is not limited to Navbar use.
+- Menu status defaults to None, avoiding an unintended status entity selection on new Menu buttons.
+- A missing entity selection now displays **No entity** instead of a dash. A configured entity that cannot be resolved displays **Unavailable**.
+- The visual editor now includes clearer field guidance, collapsible sections and a direct link to the README.
+- Button previews now follow the live card's theme, interval, icon, label and state behavior more closely.
+
+### Fixed
+
+- Improved visual-editor event handling and rerender safety for editing, moving, adding and deleting rows, buttons and badges across supported desktop and mobile Home Assistant frontends.
+- Fixed selected external Navbar state when the target Quickboard loads before or after the controller.
+- Fixed default external menu delivery so it works regardless of card connection order.
+- Fixed menu-only cards so their configured default menu renders even when Main menu rows & buttons is empty.
+
 ## v1.2.1 — 2026-07-21
 
 Version 1.2.1 expands Quickboard from a row-based entity board into a reusable navigation and styling system. The items below describe the final result compared with v1.2.0.

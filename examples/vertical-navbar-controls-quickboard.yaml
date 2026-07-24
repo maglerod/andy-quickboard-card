@@ -1,0 +1,154 @@
+# Andy Quickboard Card v1.2.2
+# Vertical Flat icon Navbar controlling menus in another Quickboard card.
+#
+# The two cards must be loaded on the same dashboard view. The IDs below are
+# deliberately fixed for this YAML example. Cards created in the visual editor
+# receive an automatic Quickboard card ID that can be copied from Basic.
+#
+# Replace the example entity IDs with entities from your Home Assistant setup.
+
+type: horizontal-stack
+cards:
+  # LEFT: vertical icon-only Navbar
+  - type: custom:andy-quickboard-card
+    card_id: quickboard_example_navbar
+    button_style: flat
+    flat_layout: rail
+    show_button_type_indicator: false
+    rows:
+      - entities:
+          - button_type: menu
+            name: Overview
+            icon: mdi:view-dashboard-outline
+            icon_size: 28
+            show_label: false
+            show_state: false
+            menu_target_scope: external
+            menu_target_card: quickboard_example_panel
+            menu_target: overview
+            menu_display: replace
+            menu_state_mode: none
+            menu_default: true
+
+      - entities:
+          - button_type: menu
+            name: Lights
+            icon: mdi:lightbulb-group-outline
+            icon_size: 28
+            show_label: false
+            show_state: false
+            menu_target_scope: external
+            menu_target_card: quickboard_example_panel
+            menu_target: lights
+            menu_display: replace
+            menu_state_mode: none
+
+      - entities:
+          - button_type: menu
+            name: Climate
+            icon: mdi:thermostat
+            icon_size: 28
+            show_label: false
+            show_state: false
+            menu_target_scope: external
+            menu_target_card: quickboard_example_panel
+            menu_target: climate
+            menu_display: replace
+            menu_state_mode: none
+
+      - entities:
+          - button_type: menu
+            name: Media
+            icon: mdi:play-box-multiple-outline
+            icon_size: 28
+            show_label: false
+            show_state: false
+            menu_target_scope: external
+            menu_target_card: quickboard_example_panel
+            menu_target: media
+            menu_display: replace
+            menu_state_mode: none
+
+  # CENTER: menu-only Quickboard used as the button panel
+  - type: custom:andy-quickboard-card
+    card_id: quickboard_example_panel
+    title: Home controls
+    default_menu_id: overview
+    button_style: raised
+    rows: []
+    menus:
+      - id: overview
+        title: Overview
+        show_title: true
+        action_after_tap: stay
+        rows:
+          - entities:
+              - entity: sensor.indoor_temperature
+                name: Indoor
+                icon: mdi:home-thermometer-outline
+              - entity: sensor.outdoor_temperature
+                name: Outdoor
+                icon: mdi:thermometer
+              - entity: binary_sensor.front_door
+                name: Front door
+                icon: mdi:door
+              - entity: alarm_control_panel.home
+                name: Alarm
+                icon: mdi:shield-home-outline
+
+      - id: lights
+        title: Lights
+        show_title: true
+        action_after_tap: stay
+        rows:
+          - entities:
+              - entity: light.living_room
+                name: Living room
+                icon: mdi:sofa-outline
+              - entity: light.kitchen
+                name: Kitchen
+                icon: mdi:countertop-outline
+              - entity: light.bedroom
+                name: Bedroom
+                icon: mdi:bed-outline
+              - entity: light.hall
+                name: Hall
+                icon: mdi:coat-rack
+
+      - id: climate
+        title: Climate
+        show_title: true
+        action_after_tap: stay
+        rows:
+          - entities:
+              - entity: climate.living_room
+                name: Living room
+                icon: mdi:thermostat
+              - entity: climate.bedroom
+                name: Bedroom
+                icon: mdi:thermostat-box
+              - entity: fan.office
+                name: Office fan
+                icon: mdi:fan
+              - entity: humidifier.bedroom
+                name: Humidifier
+                icon: mdi:air-humidifier
+
+      - id: media
+        title: Media
+        show_title: true
+        action_after_tap: stay
+        rows:
+          - entities:
+              - entity: media_player.living_room_tv
+                name: TV
+                icon: mdi:television
+              - entity: media_player.kitchen_speaker
+                name: Kitchen
+                icon: mdi:speaker
+              - entity: media_player.bedroom_speaker
+                name: Bedroom
+                icon: mdi:speaker-wireless
+              - entity: remote.apple_tv
+                name: Apple TV
+                icon: mdi:remote-tv

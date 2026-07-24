@@ -1,0 +1,56 @@
+# Andy Quickboard Card v1.2.2
+# Vertical Flat icon Navbar for Home Assistant dashboard pages.
+#
+# Replace the example navigation paths with your real dashboard paths.
+# Place the same Navbar in the same position on every destination view.
+# Exact URL matching selects the correct button automatically. The Home button
+# is the fallback selection when no configured path matches.
+#
+# To make this horizontal instead, place all four buttons in one row.
+
+type: custom:andy-quickboard-card
+card_id: quickboard_example_page_navbar
+button_style: flat
+flat_layout: rail
+show_button_type_indicator: false
+rows:
+  - entities:
+      - button_type: navigation
+        name: Home
+        icon: mdi:home-outline
+        icon_size: 28
+        show_label: false
+        show_state: false
+        navigation_path: /dashboard-home/home
+        active_path_match: exact
+        navigation_default: true
+
+  - entities:
+      - button_type: navigation
+        name: Lights
+        icon: mdi:lightbulb-group-outline
+        icon_size: 28
+        show_label: false
+        show_state: false
+        navigation_path: /dashboard-home/lights
+        active_path_match: exact
+
+  - entities:
+      - button_type: navigation
+        name: Climate
+        icon: mdi:thermostat
+        icon_size: 28
+        show_label: false
+        show_state: false
+        navigation_path: /dashboard-home/climate
+        active_path_match: exact
+
+  - entities:
+      - button_type: navigation
+        name: Security
+        icon: mdi:shield-home-outline
+        icon_size: 28
+        show_label: false
+        show_state: false
+        navigation_path: /dashboard-home/security
+        active_path_match: exact

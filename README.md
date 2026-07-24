@@ -1,10 +1,10 @@
-# Andy Quickboard Card v1.2.1
+# Andy Quickboard Card v1.2.2
 
-Andy Quickboard Card is a flexible Home Assistant Lovelace card for building compact dashboards, control panels and navigation boards.
+Andy Quickboard Card is a flexible Home Assistant Lovelace card for building compact dashboards, button panels and complete navigation systems.
 
-Buttons are arranged in rows and can either control or display an entity, or open another Quickboard menu. Menus can replace the current board or open as popups, can link to other menus, and can be nested to create complete navigation flows for rooms, device groups or any structure you prefer.
+Version 1.2.2 turns Quickboard into a full-scale controller. A card can control entities, open nested menus, switch the visible menu in another Quickboard, or navigate between Home Assistant dashboard pages. Build a vertical icon Navbar, a horizontal tab bar, a central menu-only control panel, or combine all of them.
 
-The card also includes reusable themes, state-aware color intervals, configurable shadows, badges, state-based icons and flexible tap actions. Everything runs in the browser and can be configured through the visual editor or YAML.
+The visual editor supports the complete workflow, while YAML remains available for reusable configurations and advanced layouts.
 
 > Developed by **Andreas “AndyBonde”**, author of
 > [`andy-temperature-card`](https://github.com/maglerod/andy-temperature-card) and
@@ -15,163 +15,263 @@ The card also includes reusable themes, state-aware color intervals, configurabl
 ![Andy Quickboard Card — light theme](images/preview_1_white.png)
 ![Andy Quickboard Card — dark theme](images/preview_1_dark.png)
 
+## What is new in v1.2.2?
+
+- New **Flat** button style for clean navigation rails, toolbars and modern button panels.
+- Build vertical or horizontal Navbars with any number of buttons.
+- New **Navigation button** type for opening Home Assistant dashboard pages.
+- Menu buttons can now control menus in another Quickboard card.
+- Automatic Quickboard card IDs make cross-card connections easy to configure.
+- Use a Quickboard as a menu-only content panel with a configurable default menu.
+- Keep the correct Flat Navbar button selected from the active menu or current dashboard URL.
+- Configure exact or prefix URL matching and a fallback default Navigation button.
+- Configure a default external Menu button for each target Quickboard.
+- Set button icon size and independently show or hide its icon, label and state.
+- Create centered icon-only buttons while state-based icon rules continue working.
+- Set badge font size and icon size independently.
+- Show or hide each menu title on the live card.
+- Deep-duplicate complete buttons and badges from the visual editor.
+
+See the complete [v1.2.2 changelog](CHANGELOG.md#v122--2026-07-24).
+
 ## Features
+
+### Full-scale controller and Navbar
+
+- Control entities, local menus, external Quickboards and Home Assistant pages from one card.
+- Arrange one button per row for a vertical Navbar.
+- Place several buttons in the same row for a horizontal Navbar.
+- Use as many rows and buttons as the dashboard requires.
+- Use Flat icon-only buttons for a compact rail or Flat icon-and-label buttons for a wider menu.
+- Keep the selected Flat button highlighted after a tap.
+- Synchronize an external Navbar with the menu currently displayed by its target Quickboard.
+- Match the selected page button against the current Home Assistant URL.
+- Choose a default menu, default external menu button or fallback page button.
 
 ### Rows and buttons
 
-- Build the board row by row with any number of buttons.
-- Add an optional label above or below each row, aligned left, center or right.
-- Buttons automatically share the available row width.
-- Use ordinary entity buttons and menu buttons together in the same row.
-- Override icon visibility, unit and decimal places globally or per button.
-- Use a single icon or state-based `state → icon` mappings.
-- Optionally show a subtle Entity/Menu type symbol on the live card.
+- Build every board and menu row by row.
+- Add any number of buttons to a row; buttons share the available width.
+- Add an optional row label above or below the row, aligned left, center or right.
+- Mix Entity, Menu and Navigation buttons in the same card.
+- Choose **Raised** for the classic Quickboard appearance or **Flat** for a clean navigation style.
+- Set icon size per button.
+- Independently show or hide the icon, label and state.
+- Leave the Name empty to use the Home Assistant entity friendly name.
+- Hide Label and State to create a centered icon-only button.
+- Use one fixed icon or exact `state → icon` mappings.
+- Missing entity selections are clearly shown as **No entity**.
+- Optionally show a subtle button-type symbol on the live card.
+- Deep-duplicate a complete button, including nested intervals, state icons, actions and badges.
 
 ### Menus and submenus
 
 - Create any number of reusable menus.
-- Nest menus to build multi-level navigation.
-- Open a menu by replacing the current board or as a popup.
-- Link several menu buttons to the same existing menu.
-- Navigate to another menu, the previous menu or directly to the main board.
-- Optionally show built-in Back and Close controls. Popup menus always include Close so the user cannot become trapped in the popup.
-- Choose what happens after an entity button is tapped inside a menu: stay, go back one level or close the menu flow.
-- Populate every menu with rows and buttons that use their own badges, colors and theme inheritance.
+- Nest menus without a fixed card-level depth limit.
+- Open a menu by replacing the current Quickboard content or as a popup.
+- Link several buttons to the same existing menu.
+- Navigate to another menu, the previous menu or the main board.
+- Open a menu in another Quickboard on the same dashboard view.
+- Use a Quickboard with no main rows as a dedicated menu-only content panel.
+- Choose the menu initially displayed by a content panel.
+- Show or hide each menu title without losing its editor name.
+- Optionally show built-in Back and Close controls.
+- Popup menus always include Close so the user cannot become trapped.
+- Choose what happens after an entity button is tapped: stay, go back or close.
 
 Menu buttons can display status in three ways:
 
-- **Automatic active/total** counts active entities in the destination menu and uses the active count for color intervals.
-- **Status entity** uses a selected entity's state and attributes.
-- **None** hides menu status completely.
+- **Automatic active/total** recursively counts active entities in a local destination menu.
+- **Status entity** uses a selected Home Assistant entity.
+- **None** hides menu status completely and is the default.
 
-### Color intervals
+### Reusable themes and color intervals
 
-- Define global color intervals using numeric ranges or exact state matching.
-- Add per-button intervals that replace the global intervals for that button.
-- Choose interval-based colors or a fixed custom gradient for an individual button.
-- Set a solid background or gradient, text/icon color and active shadow color per interval.
-- Add custom state labels and suffix text.
-- Use template variables such as `<state>`, `<unit>`, `<dimmer_pct>`, `<source>`, `<title>`, `<artist>`, `<album>` and `<title_artist>`.
-- Independently choose whether a matched interval overrides an active theme's button color and/or text/icon color.
-
-### Reusable themes
-
-- Create reusable button themes with gradient, text color, border, radius, shadow and badge style.
+- Create reusable themes with gradients, text color, border, radius, shadow, button style and badge style.
 - Assign themes globally, to the main menu, to a submenu, to a row or to one button.
 - Theme priority is **button → row → menu → global**.
 - Select **No theme** at an override level to return to intervals or custom button colors.
-- Intervals can still provide state-dependent colors when their theme override options are enabled.
+- Define global or per-button numeric ranges and exact state matches.
+- Configure background, gradient, text/icon color, state label, suffix and active shadow color per interval.
+- Independently choose whether an interval overrides an active theme's button color and/or text/icon color.
+- Use template variables such as `<state>`, `<unit>`, `<dimmer_pct>`, `<source>`, `<title>`, `<artist>`, `<album>` and `<title_artist>`.
 
 ### Shadows and appearance
 
-- Configure the default button radius and padding.
-- Choose from None, Soft, Medium, Strong and Glow shadow presets.
-- Control shadow strength globally and override it in themes or on individual buttons.
-- Use the Home Assistant theme color, active theme/interval color, a custom color or classic black as the shadow color source.
-- Use an interval's active shadow color to create state-dependent glow effects.
+- Configure the default button radius and horizontal/vertical padding.
+- Choose None, Soft, Medium, Strong or Glow shadows.
+- Set shadow strength globally or override it in a theme or individual button.
+- Use the Home Assistant theme color, active theme/interval color, custom color or classic black.
+- Use interval colors for state-dependent glow effects.
 - Enable or disable the hover lift effect.
+- Style the card background with `card-mod` through `--andy-quickboard-card-background`.
 
 ### Badges
 
-Every entity or menu button can contain multiple badges. Badge styles can inherit from the global setting or theme, and can be overridden for one button.
+Every Entity or Menu button can contain multiple badges. Badge style can inherit from the global setting or theme, or be overridden on one button.
 
 - **Value** — display another entity's current value.
 - **Dimmer** — display and control a light's brightness.
-- **Statistics** — min, max, average, last on, last off or last changed over a configurable history window.
-- **Media control** — play/pause, play, pause, stop, next, previous, volume up/down or mute.
+- **Statistics** — min, max, average, last on, last off or last changed.
+- **Media control** — play/pause, play, pause, stop, next, previous, volume or mute.
 - **Media information** — title, artist, album, source or title + artist.
-- **Alarm control** — arm home, arm away, arm night or disarm, with an optional code.
-- Optional icon, label, unit and decimal-place override per badge.
-- Available styles: Pill, Pill strong, Chip, Underline and None.
+- **Alarm control** — arm or disarm with an optional code.
+- Configure icon, label, unit, decimal places, font size and icon size per badge.
+- Use Pill, Pill strong, Chip, Underline or None styles.
+- Deep-duplicate a badge and then change only the entity or value that differs.
 
 > Statistics use Home Assistant's history REST endpoint through `hass.callApi()`.
 
 ### Tap actions
 
-Each entity button supports:
+Entity buttons support:
 
+- `default`
 - `toggle`
 - `more-info`
 - `navigate`
 - `url`
 - `call-service`
 - `none`
-- `default`, which selects a suitable action from the entity domain
 
-The default behavior toggles lights, switches, fans and input booleans; runs scripts; opens or closes covers; locks or unlocks locks; activates scenes, buttons, input buttons and automations; and opens the standard more-info dialog for other domains.
+The default behavior toggles lights, switches, fans and input booleans; runs scripts; opens or closes covers; locks or unlocks locks; activates scenes, buttons, input buttons and automations; and opens the standard More info dialog for other domains.
 
 ### Home Assistant integration
 
-- Full visual editor support; YAML is optional.
+- Complete visual editor; YAML is optional.
 - Uses a normal `ha-card` and works with `card-mod`.
 - Runs fully in the browser with no custom backend integration.
+- Includes confirmation before destructive delete actions.
+- Includes live-style previews for buttons, themes and color intervals.
 
-## Menu buttons explained
+## Controller and navigation modes
 
-A menu is a reusable collection of rows and buttons. A menu button is simply a button whose destination points to one of those menu definitions.
+One Quickboard button can have three different destination types:
 
-For example, the main board can contain a **Lights** button. That button opens a menu containing **Bedroom**, **Kitchen** and **Bathroom**. The Bedroom button can then open another menu containing the individual bedroom lights. There is no fixed nesting limit imposed by the card, so the same pattern can be extended as far as the dashboard needs.
+| Button type | Destination | Typical use |
+| --- | --- | --- |
+| Entity | Home Assistant entity or action | Lights, scenes, scripts, climate and status |
+| Menu | A local menu or a menu in another Quickboard | Nested control panels and external Navbars |
+| Navigation | Home Assistant dashboard path | Persistent page navigation |
 
-### Navigation modes
+### Vertical or horizontal — you decide
+
+Quickboard does not impose a Navbar direction:
+
+- **Vertical:** create several rows with one button in each row.
+- **Horizontal:** create one row containing several buttons.
+- **Grid or mixed:** combine multiple rows and button counts.
+
+Set `button_style: flat` and `flat_layout: rail` for a compact icon rail. Use `flat_layout: label` for Flat buttons that retain their icon and label. Flat is only a visual style and works with Entity, Menu and Navigation buttons.
+
+### Controlling another Quickboard
+
+Each card created in the visual editor receives a persistent Quickboard card ID. The ID is shown in **Basic → Quickboard card ID** and can be copied with one click.
+
+To build a Navbar and separate content panel:
+
+1. Create the content Quickboard and add the menus it should display.
+2. Copy its Quickboard card ID.
+3. Create a second Quickboard for the Navbar.
+4. Change a Navbar button to **Menu button**.
+5. Select **Another Quickboard card**.
+6. Paste the target card ID and enter its Menu ID.
+7. Repeat for the other destination menus.
+8. Enable **Default menu for target card** on one Navbar button if it should open automatically.
+
+The target card may leave **Main menu rows & buttons** empty. Set **Default displayed menu** to make it a dedicated menu-only button panel.
+
+Cross-card control works between Quickboards loaded on the same dashboard view. The target announces its active menu, allowing the correct Flat Navbar button to remain selected.
+
+#### Cross-card YAML options
+
+| Option | Description |
+| --- | --- |
+| `card_id` | Persistent ID of a Quickboard. Generated automatically in the visual editor. |
+| `default_menu_id` | Menu initially displayed by a menu-only content card. |
+| `menu_target_scope: external` | Makes the Menu button target another Quickboard. |
+| `menu_target_card` | `card_id` of the receiving Quickboard. |
+| `menu_target` | Menu ID in the receiving Quickboard. |
+| `menu_display` | `replace` or `popup`. |
+| `menu_default` | Opens this destination automatically and marks it as the default for that target. |
+
+### Navigating between Home Assistant pages
+
+A Navigation button opens a dashboard path such as `/dashboard-tablet/lights`.
+
+When the same Navbar is placed on several views:
+
+- **Exact path** selects a button only when its complete path matches.
+- **Path and subpaths** also selects it on pages below that path.
+- **Default active button** is the fallback when no configured path matches.
+- A real URL match always has priority over the fallback.
+- **Replace browser history entry** can avoid adding another browser Back entry.
+
+#### Navigation YAML options
+
+| Option | Description |
+| --- | --- |
+| `button_type: navigation` | Marks the button as a Home Assistant page button. |
+| `navigation_path` | Dashboard path beginning with `/`. |
+| `active_path_match` | `exact` or `prefix`. |
+| `navigation_default` | Fallback selected button when no path matches. |
+| `navigation_replace` | Replaces instead of adding a browser history entry. |
+
+## Complete navigation examples
+
+The examples use four vertical Flat icon buttons and can be pasted into a Manual card. Replace the example entity IDs, paths and card IDs with values from your setup.
+
+- [Vertical Flat Navbar controlling four menus in another Quickboard](examples/vertical-navbar-controls-quickboard.yaml)
+
+  Includes a left icon rail and a central menu-only panel with four menus and four buttons per menu.
+
+- [Vertical Flat Navbar navigating between Home Assistant pages](examples/vertical-navbar-home-assistant-pages.yaml)
+
+  Includes exact URL matching, automatic active-page selection and a fallback default button.
+
+To convert either Navbar to horizontal, move all four button definitions into a single row.
+
+## Local menu buttons explained
+
+A local menu is a reusable collection of rows and buttons inside the same Quickboard.
+
+For example, the main board can contain a **Lights** button. It opens a menu containing **Bedroom**, **Kitchen** and **Bathroom**. Bedroom can then open another menu containing the individual bedroom lights.
+
+### Local navigation modes
 
 | Mode | Behavior |
 | --- | --- |
-| Replace current menu | Opens the destination in the current Quickboard area and adds it to the navigation history. |
-| Popup | Opens the destination above the current board. A Close control is always available. |
-| Previous menu | Uses the special target `__back__` to return one navigation level. |
-| Main menu | Uses the special target `__root__` to return directly to the main board. |
-
-### Action after tap
-
-Each menu has a default action that runs after an ordinary entity button inside that menu is tapped:
-
-| Action | Result |
-| --- | --- |
-| Stay | Keep the current menu open. |
-| Go back | Return one level after the entity action runs. |
-| Close | Close the popup or return the replaced menu flow to the main board. |
-
-Navigation buttons keep their own destination behavior and are not affected by this setting.
-
-### Creating a menu in the visual editor
-
-1. Open **Menus & submenus** and select **Add menu**.
-2. Give the menu a title and stable Menu ID.
-3. Add rows and buttons to the menu just as you would on the main board.
-4. Open a button under **Main menu rows & buttons** or inside another menu.
-5. Change **Button type** to **Menu button**.
-6. Select the destination and choose **Replace current menu** or **Popup**.
-7. Choose its status mode and whether a Back control should be shown.
-
-The same destination menu can be selected by several buttons. Renaming a Menu ID in the visual editor updates existing links to it.
+| Replace current menu | Opens the destination in the current Quickboard and adds it to its menu history. |
+| Popup | Opens the destination above the current board. Close is always available. |
+| Previous menu | Uses `__back__` to return one level. |
+| Main menu | Uses `__root__` to return to the configured initial content. |
 
 ### Menu YAML options
 
-Menu definitions are stored in the top-level `menus` list:
-
 | Option | Description |
 | --- | --- |
-| `id` | Unique destination ID used by menu buttons. |
-| `title` | Menu title shown on the card. |
+| `id` | Unique destination ID. |
+| `title` | Name used by the card and editor. |
+| `show_title` | Shows or hides the title on the live card. |
 | `rows` | Rows and buttons contained in the menu. |
-| `action_after_tap` | `stay`, `back` or `close` after an entity button is tapped. |
-| `theme_id` | Optional theme override for the menu. |
-| `group` | Optional organizational group used by the visual editor. |
-| `description` | Optional editor note. |
+| `action_after_tap` | `stay`, `back` or `close`. |
+| `theme_id` | Optional theme override. |
+| `group` | Optional visual-editor organization group. |
+| `description` | Optional editor-only note. |
 
-The following options turn an item in a row into a menu button:
+Local Menu button options:
 
 | Option | Description |
 | --- | --- |
-| `button_type: menu` | Marks the button as a menu button. |
+| `button_type: menu` | Marks the button as a Menu button. |
 | `menu_target` | Destination Menu ID, `__back__` or `__root__`. |
 | `menu_display` | `replace` or `popup`. |
-| `menu_show_back` | Shows a built-in Back control in the opened menu. |
-| `menu_show_close` | Shows a Close control for a replaced menu. Popup Close is always enabled. |
+| `menu_show_back` | Shows the built-in Back control. |
+| `menu_show_close` | Shows Close in a replaced menu. Popup Close is always enabled. |
 | `menu_state_mode` | `auto`, `entity` or `none`. |
 | `entity` | Optional status entity when `menu_state_mode: entity` is used. |
 
-Menu buttons also support `badges`, `color_intervals`, custom colors, themes and shadow settings just like entity buttons.
+Menu buttons support the same badges, themes, color intervals, shadows, icons and display controls as Entity buttons.
 
 ## Installation
 
@@ -187,19 +287,17 @@ HACS normally adds the Lovelace resource automatically.
 
 ### Option B — HACS custom repository
 
-Use this method if the card is not available in your HACS search:
-
-1. Open **HACS** and select **Custom repositories** from the three-dot menu.
+1. Open **HACS** and select **Custom repositories**.
 2. Add `https://github.com/maglerod/andy-quickboard-card`.
 3. Select **Lovelace** as the category.
-4. Install **Andy Quickboard Card** from the HACS Frontend section.
+4. Install **Andy Quickboard Card** from HACS Frontend.
 
 ### Option C — Manual installation
 
 1. Download [`dist/andy-quickboard-card.js`](dist/andy-quickboard-card.js).
 2. Copy it to `/config/www/andy-quickboard-card.js`.
 3. Go to **Settings → Dashboards → Resources**.
-4. Add `/local/andy-quickboard-card.js?v=1.2.1` as a **JavaScript Module**.
+4. Add `/local/andy-quickboard-card.js?v=1.2.2` as a **JavaScript Module**.
 5. Save and perform a hard refresh (`Ctrl+F5` or `Cmd+Shift+R`).
 
 ## Add the card
@@ -209,13 +307,16 @@ Use this method if the card is not available in your HACS search:
 1. Edit a Home Assistant dashboard.
 2. Select **Add card**.
 3. Search for **Andy Quickboard Card**.
-4. Configure the rows, buttons and optional menus, then save.
+4. Configure rows, buttons, menus and appearance, then save.
+
+The editor header links back to this documentation and the complete examples.
 
 ### Basic YAML example
 
 ```yaml
 type: custom:andy-quickboard-card
 title: Home quickboard
+button_style: raised
 color_intervals:
   - from: 0
     to: 21
@@ -244,91 +345,33 @@ rows:
         icon: mdi:watch
 ```
 
-### Nested menu YAML example
+### Button display YAML options
+
+| Option | Description |
+| --- | --- |
+| `button_style` | `raised`, `flat` or `inherit` where supported. |
+| `icon_size` | Button icon size in pixels. |
+| `show_icon` | Shows or hides the icon. |
+| `show_label` | Shows or hides the custom/friendly name. |
+| `show_state` | Shows or hides the state/value line. |
+| `icon_mode` | `single` or `state`. |
+| `icon_states` | Exact state-to-icon mappings. |
+
+## card-mod
+
+Quickboard uses a regular `ha-card`. The card background can be overridden without changing the button colors:
 
 ```yaml
-type: custom:andy-quickboard-card
-title: Home
-
-color_intervals:
-  - from: 0
-    to: 1
-    color_from: "#546E7A"
-    color_to: "#37474F"
-    text_color: "#FFFFFF"
-  - from: 1
-    to: 999
-    color_from: "#F9A825"
-    color_to: "#F57F17"
-    text_color: "#FFFFFF"
-
-rows:
-  - label: Navigation
-    label_position: top-left
-    entities:
-      - button_type: menu
-        name: Lights
-        icon: mdi:lightbulb-group
-        menu_target: lights
-        menu_display: popup
-        menu_show_back: true
-        menu_state_mode: auto
-
-menus:
-  - id: lights
-    title: Lights
-    action_after_tap: stay
-    rows:
-      - label: Rooms
-        label_position: top-left
-        entities:
-          - button_type: menu
-            name: Bedroom
-            icon: mdi:bed
-            menu_target: bedroom_lights
-            menu_display: replace
-            menu_show_back: true
-            menu_state_mode: auto
-          - entity: light.kitchen
-            name: Kitchen
-            icon: mdi:countertop
-
-  - id: bedroom_lights
-    title: Bedroom lights
-    action_after_tap: close
-    rows:
-      - entities:
-          - entity: light.bedroom_ceiling
-            name: Ceiling
-          - entity: light.bedside_left
-            name: Left bedside
-          - entity: light.bedside_right
-            name: Right bedside
-```
-
-### Reusable theme YAML example
-
-```yaml
-button_themes:
-  - id: evening
-    name: Evening
-    color_from: "#4527A0"
-    color_to: "#7E57C2"
-    text_color: "#FFFFFF"
-    border_color: "#B39DDB"
-    border_width: 1
-    border_radius: 18
-    box_shadow: 0 0 18px rgba(0, 0, 0, 0.45)
-    shadow_strength: 65
-    shadow_color_mode: active
-    badge_style: pill
-
-default_theme_id: evening
+card_mod:
+  style: |
+    ha-card {
+      --andy-quickboard-card-background: rgba(20, 20, 24, 0.88);
+    }
 ```
 
 ## Updating
 
-After replacing the JavaScript file or installing a new HACS release, reload Home Assistant's frontend and perform a hard refresh. If the browser still uses an older file, update the version query in the manual resource URL.
+After replacing the JavaScript file or installing a HACS release, reload Home Assistant's frontend and perform a hard refresh. If the browser still uses an older file, update the version query in the manual resource URL.
 
 See [CHANGELOG.md](CHANGELOG.md) for release changes.
 
