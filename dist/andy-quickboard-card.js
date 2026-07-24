@@ -1015,6 +1015,14 @@ if (!customElements.get(CARD_TAG)) {
       root.innerHTML = "";
       root.appendChild(style);
 
+      const cardModStyle = this._config?.card_mod?.style;
+      if (typeof cardModStyle === "string" && cardModStyle.trim()) {
+        const cardModCompatibilityStyle = document.createElement("style");
+        cardModCompatibilityStyle.setAttribute("data-andy-card-mod", "true");
+        cardModCompatibilityStyle.textContent = cardModStyle;
+        root.appendChild(cardModCompatibilityStyle);
+      }
+
       const haCard = document.createElement("ha-card");
       haCard.classList.add("quickboard-card");
 
@@ -2060,7 +2068,7 @@ if (!customElements.get(CARD_TAG)) {
         :host {
           display: block;
         }
-        ha-card.quickboard-card {
+        :where(ha-card.quickboard-card) {
           overflow: visible;
           position: relative;
           background: var(
@@ -2068,7 +2076,7 @@ if (!customElements.get(CARD_TAG)) {
             var(--ha-card-background, var(--card-background-color, #fff))
           );
         }
-        ha-card.quickboard-card.flat-rail-card {
+        :where(ha-card.quickboard-card.flat-rail-card) {
           width: max-content;
           min-width: 60px;
           margin-inline: auto;
