@@ -1,6 +1,6 @@
 /**
  * Andy Quickboard Card
- * v1.2.2
+ * v1.2.3
  * ------------------------------------------------------------------
  * Developed by: Andreas ("AndyBonde") with some help from AI :).
  *
@@ -24,6 +24,39 @@ const NAVIGATION_STATE_EVENT = "andy-quickboard-navigation-state";
 const NAVIGATION_STATE_STORE = "__andyQuickboardNavigationState";
 const NAVIGATION_DEFAULT_STORE = "__andyQuickboardNavigationDefaults";
 
+const INTERVAL_NUMBER_SELECTOR = {
+  number: {
+    min: Number.MIN_SAFE_INTEGER,
+    max: Number.MAX_SAFE_INTEGER,
+    step: "any",
+    mode: "box",
+  },
+};
+
+const numericIntervalBounds = (interval) => {
+  const from = Number(interval?.from ?? 0);
+  const to = Number(interval?.to ?? 0);
+  if (!Number.isFinite(from) || !Number.isFinite(to)) return null;
+  return { lower: Math.min(from, to), upper: Math.max(from, to) };
+};
+
+const numericIntervalMatches = (value, interval) => {
+  const numericValue = Number(value);
+  const bounds = numericIntervalBounds(interval);
+  return Boolean(
+    Number.isFinite(numericValue) &&
+    bounds &&
+    numericValue >= bounds.lower &&
+    numericValue < bounds.upper
+  );
+};
+
+const numericIntervalLabel = (interval) => {
+  const bounds = numericIntervalBounds(interval);
+  if (!bounds) return `${interval?.from ?? 0} to ${interval?.to ?? 0}`;
+  return `${bounds.lower} to ${bounds.upper}`;
+};
+
 const createQuickboardCardId = () => {
   const uuid = globalThis.crypto?.randomUUID?.();
   if (uuid) return `quickboard_${uuid}`;
@@ -33,7 +66,7 @@ const createQuickboardCardId = () => {
 };
 
 console.info(
-  `%c Andy Quickboard Card %c v1.2.2 loaded `,
+  `%c Andy Quickboard Card %c v1.2.3 loaded `,
   "color: white; background: #1565C0; padding: 4px 8px; border-radius: 4px 0 0 4px;",
   "color: white; background: #1E88E5; padding: 4px 8px; border-radius: 0 4px 4px 0;"
 );
@@ -1987,14 +2020,12 @@ if (!customElements.get(CARD_TAG)) {
         ? entCfg.color_intervals
         : (this._config.color_intervals || []);
       const rawState = String(stateObj.state ?? "");
-      const numericVal = Number(rawState);
-      const hasNumeric = !isNaN(numericVal);
       for (const interval of intervals) {
         if (interval.match_state) {
           if (rawState.toLowerCase() === String(interval.match_state).toLowerCase()) return interval;
           continue;
         }
-        if (hasNumeric && numericVal >= (interval.from ?? 0) && numericVal < (interval.to ?? 0)) return interval;
+        if (numericIntervalMatches(rawState, interval)) return interval;
       }
       return null;
     }
@@ -3046,7 +3077,7 @@ if (!customElements.get(EDITOR_TAG)) {
         <style>${this._css()}</style>
         <div class="editor-wrap">
         <div class="editor-top-title">
-          <div>Andy Quickboard Card v1.2.2</div>
+          <div>Andy Quickboard Card v1.2.3</div>
           <a class="editor-doc-link"
              href="https://github.com/maglerod/andy-quickboard-card/blob/main/README.md"
              target="_blank" rel="noopener noreferrer">
@@ -3279,7 +3310,7 @@ if (!customElements.get(EDITOR_TAG)) {
           <div class="section-body">
           <div class="section-note">
             Color intervals control each button’s background, text, optional shadow glow and state/suffix text.
-            Numeric entities match the From/To range; non-numeric entities can match an exact state.
+            Numeric entities match the From/To range; both limits accept negative values and decimals, and their order does not matter. Non-numeric entities can match an exact state.
             Buttons with their own intervals override these global defaults. Automatic menu buttons use
             the number of active entities in their destination menu. When a button has an active reusable theme,
             the two theme-override switches independently control its button colors and text/icon color. Without an active theme, those switches have no effect.
@@ -3290,20 +3321,20 @@ if (!customElements.get(EDITOR_TAG)) {
               <div slot="header" class="color-preview-header">
                 <span>${interval.match_state
                   ? `Interval ${idx + 1} — state: ${interval.match_state}`
-                  : `Interval ${idx + 1} — ${interval.from ?? 0} to ${interval.to ?? 0}`}</span>
+                  : `Interval ${idx + 1} — ${numericIntervalLabel(interval)}`}</span>
               </div>
               <div class="expansion-content">
                 <div class="two-col">
                   <ha-selector
                     .hass=${this.hass} .label=${"From"}
                     .value=${interval.from ?? 0}
-                    .selector=${{number: {step: 1, mode: "box"}}}
+                    .selector=${INTERVAL_NUMBER_SELECTOR}
                     @value-changed=${(e) => this._updateIntervalField(idx, "from", Number(e.detail.value))}
                   ></ha-selector>
                   <ha-selector
                     .hass=${this.hass} .label=${"To"}
                     .value=${interval.to ?? 0}
-                    .selector=${{number: {step: 1, mode: "box"}}}
+                    .selector=${INTERVAL_NUMBER_SELECTOR}
                     @value-changed=${(e) => this._updateIntervalField(idx, "to", Number(e.detail.value))}
                   ></ha-selector>
                 </div>
@@ -4282,16 +4313,12 @@ if (!customElements.get(EDITOR_TAG)) {
         ? ent.color_intervals
         : (this._config.color_intervals || []);
       const rawState = String(stateObj.state ?? "");
-      const numericValue = Number(rawState);
-      const hasNumericValue = !Number.isNaN(numericValue);
       for (const interval of intervals) {
         if (interval.match_state) {
           if (rawState.toLowerCase() === String(interval.match_state).toLowerCase()) return interval;
           continue;
         }
-        if (hasNumericValue && numericValue >= (interval.from ?? 0) && numericValue < (interval.to ?? 0)) {
-          return interval;
-        }
+        if (numericIntervalMatches(rawState, interval)) return interval;
       }
       return null;
     }
@@ -4811,25 +4838,25 @@ if (!customElements.get(EDITOR_TAG)) {
 
             ${colorMode === "interval" ? html`
               <div class="subsection-title">Per-button color intervals</div>
-              <div class="helper-text">Leave empty to use global color intervals. For an automatic menu button, From/To matches its active-entity count.</div>
+              <div class="helper-text">Leave empty to use global color intervals. From and To accept negative values and decimals in either order. For an automatic menu button, the range matches its active-entity count.</div>
               ${(ent.color_intervals || []).map((interval, iIdx) => html`
                 <ha-expansion-panel class="interval-editor-panel color-preview-panel"
                   style=${this._editorPanelColorStyle(interval, "#1E88E5", "#FFFFFF")}>
                   <div slot="header" class="color-preview-header">
                     <span>${interval.match_state
                       ? `Interval ${iIdx + 1} — state: ${interval.match_state}`
-                      : `Interval ${iIdx + 1} — ${interval.from ?? 0} to ${interval.to ?? 0}`}</span>
+                      : `Interval ${iIdx + 1} — ${numericIntervalLabel(interval)}`}</span>
                   </div>
                   <div class="expansion-content">
                     <div class="two-col">
                       <ha-selector .hass=${this.hass} .label=${"From"}
                         .value=${interval.from ?? 0}
-                        .selector=${{number: {step: 1, mode: "box"}}}
+                        .selector=${INTERVAL_NUMBER_SELECTOR}
                         @value-changed=${(e) => this._updateEntityIntervalField(rowIdx, entIdx, iIdx, "from", Number(e.detail.value), menuId)}
                       ></ha-selector>
                       <ha-selector .hass=${this.hass} .label=${"To"}
                         .value=${interval.to ?? 0}
-                        .selector=${{number: {step: 1, mode: "box"}}}
+                        .selector=${INTERVAL_NUMBER_SELECTOR}
                         @value-changed=${(e) => this._updateEntityIntervalField(rowIdx, entIdx, iIdx, "to", Number(e.detail.value), menuId)}
                       ></ha-selector>
                     </div>

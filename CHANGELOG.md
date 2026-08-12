@@ -2,6 +2,21 @@
 
 All notable changes to Andy Quickboard Card are documented in this file.
 
+## v1.2.3 — 2026-08-12
+
+Version 1.2.3 adds generic negative-value support to numeric color intervals while retaining all features from the latest v1.2.2.1 release.
+
+### Added
+
+- Added negative and decimal limits to global and per-button color intervals.
+- Added unrestricted number-box input for interval From and To values in the visual editor.
+
+### Changed
+
+- Reversed interval limits are normalized automatically, so `-5 → -10` behaves as the effective range `-10 → -5`.
+- Collapsed interval headers display the effective normalized range.
+- The live card and visual-editor preview now share the same interval matching logic.
+
 ## v1.2.2 — 2026-07-24
 
 Version 1.2.2 expands Quickboard from an in-card menu system into a full controller and navigation platform. The items below describe the final result compared with v1.2.1.

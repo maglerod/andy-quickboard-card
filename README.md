@@ -1,8 +1,8 @@
-# Andy Quickboard Card v1.2.2
+# Andy Quickboard Card v1.2.3
 
 Andy Quickboard Card is a flexible Home Assistant Lovelace card for building compact dashboards, button panels and complete navigation systems.
 
-Version 1.2.2 turns Quickboard into a full-scale controller. A card can control entities, open nested menus, switch the visible menu in another Quickboard, or navigate between Home Assistant dashboard pages. Build a vertical icon Navbar, a horizontal tab bar, a central menu-only control panel, or combine all of them.
+Quickboard is a full-scale controller. A card can control entities, open nested menus, switch the visible menu in another Quickboard, or navigate between Home Assistant dashboard pages. Build a vertical icon Navbar, a horizontal tab bar, a central menu-only control panel, or combine all of them.
 
 The visual editor supports the complete workflow, while YAML remains available for reusable configurations and advanced layouts.
 
@@ -15,7 +15,15 @@ The visual editor supports the complete workflow, while YAML remains available f
 ![Andy Quickboard Card — light theme](images/preview_1_white.png)
 ![Andy Quickboard Card — dark theme](images/preview_1_dark.png)
 
-## What is new in v1.2.2?
+## What is new in v1.2.3?
+
+- Color intervals now accept negative values and decimals globally and per button.
+- Interval limits can be entered in either order. For example, `-5 → -10` is normalized to the same effective range as `-10 → -5`.
+- The live card and visual-editor previews now use the same normalized interval matching.
+
+See the complete [v1.2.3 changelog](CHANGELOG.md#v123--2026-08-12).
+
+## What was added in v1.2.2?
 
 - New **Flat** button style for clean navigation rails, toolbars and modern button panels.
 - Build vertical or horizontal Navbars with any number of buttons.
@@ -92,6 +100,7 @@ Menu buttons can display status in three ways:
 - Theme priority is **button → row → menu → global**.
 - Select **No theme** at an override level to return to intervals or custom button colors.
 - Define global or per-button numeric ranges and exact state matches.
+- Use positive or negative range limits, including decimals, in either order; `-10 → -5` and `-5 → -10` resolve to the same interval.
 - Configure background, gradient, text/icon color, state label, suffix and active shadow color per interval.
 - Independently choose whether an interval overrides an active theme's button color and/or text/icon color.
 - Use template variables such as `<state>`, `<unit>`, `<dimmer_pct>`, `<source>`, `<title>`, `<artist>`, `<album>` and `<title_artist>`.
@@ -297,7 +306,7 @@ HACS normally adds the Lovelace resource automatically.
 1. Download [`dist/andy-quickboard-card.js`](dist/andy-quickboard-card.js).
 2. Copy it to `/config/www/andy-quickboard-card.js`.
 3. Go to **Settings → Dashboards → Resources**.
-4. Add `/local/andy-quickboard-card.js?v=1.2.2` as a **JavaScript Module**.
+4. Add `/local/andy-quickboard-card.js?v=1.2.3` as a **JavaScript Module**.
 5. Save and perform a hard refresh (`Ctrl+F5` or `Cmd+Shift+R`).
 
 ## Add the card
